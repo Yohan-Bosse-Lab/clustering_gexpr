@@ -1,0 +1,267 @@
+---
+title: "Gexpr clustering - GDC"
+author: "Sébastien Renaut (sebastien.renaut@criucpq.ulaval.ca)"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    number_sections: F
+params:
+  datapath: 'C:/Users/renseb01/Documents/clustering_gexpr/data'
+  outputpath: 'C:/Users/renseb01/Documents/clustering_gepxr/results/Nov2024'
+  repo: 'C:/Users/renseb01/Documents/clustering'
+   
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = params$repo)
+knitr::opts_chunk$set(echo = F)
+library(ggplot2)
+library(patchwork)
+library(factoextra)
+library(cluster)
+library(DESeq2)
+library(dplyr)
+library(tidyr)
+library(RColorBrewer)
+library(ggcorrplot)
+library(ConsensusClusterPlus)
+```
+
+
+
+```{r gdc files}
+gdc_files = list.files(file.path(params$datapath,'gdc/'),recursive = TRUE,pattern = 'tsv$')
+gdc_samplesheet = read.table(file.path(params$datapath,'gdc_sample_sheet.2024-11-22.tsv'),header = T,sep = '\t',check.names = F)
+clinical_samplesheet = read.table(file.path(params$datapath,'clinical.tsv'),header = T,sep = '\t',check.names = F,quote = "",na.strings = "'--")
+projectID = NULL
+clinical = NULL
+
+#merge all the data together
+for(i in 1:length(gdc_files)){
+#  for(i in 1:159){
+  temp = read.table(file.path(params$datapath,'gdc/',gdc_files[i]),header = T, sep = '\t')
+  
+  if(i == 1) {bulk_gdc = data.frame(gene_id = temp$gene_id,gene_name = temp$gene_name,sampleX = temp$unstranded)}
+
+  if(i > 1) {bulk_gdc = cbind(bulk_gdc,temp$unstranded)}
+  
+  colname = gdc_samplesheet$`Case ID`[gdc_samplesheet$`File Name` == strsplit(gdc_files[i],'/')[[1]][[2]]]
+  colnames(bulk_gdc)[ncol(bulk_gdc)] = colname
+
+  temp_project = gdc_samplesheet$`Project ID`[gdc_samplesheet$`File Name` == strsplit(gdc_files[i],'/')[[1]][[2]]]
+  projectID = c(projectID,temp_project)
+  
+  temp_clinical = clinical_samplesheet[clinical_samplesheet$case_submitter_id == colname,]
+
+  clinical = rbind(clinical,temp_clinical[1,])
+
+  if(i %% 100 == 0) print(paste0('Done ',i,', Time is:',Sys.time()))
+}
+
+#remove the summary stats
+bulk_gdc = bulk_gdc[-c(1:5),]
+
+#remove duplicated genes
+bulk_gdc = bulk_gdc[duplicated(sapply(strsplit(bulk_gdc$gene_id, ".",fixed = T), "[",1)) == F,]
+
+rownames(bulk_gdc) = sapply(strsplit(bulk_gdc$gene_id, ".",fixed = T), "[",1) 
+bulkmat_gdc = as.matrix(bulk_gdc[,-c(1:2)])
+
+#keep only TCGA and remove duplicates
+bulkmat_tcga = bulkmat_gdc[,projectID == 'TCGA-LUAD']
+bulkmat_tcga = bulkmat_tcga[,nchar(colnames(bulkmat_tcga)) == 12]
+
+clinical_table = clinical[grep('TCGA',clinical$case_submitter_id),]
+clinical_table  = clinical_table[duplicated(clinical_table$case_submitter_id)==F,]
+
+all.equal(clinical_table$case_submitter_id,colnames(bulkmat_tcga))
+
+bulkmat_vst_tcga = vst(round(bulkmat_tcga))
+
+#
+write.table(bulkmat_vst_tcga,file.path(params$datapath,'gdc/bulkmat_tcga.csv'), col.names = T, row.names = T)
+write.table(clinical_table,file.path(params$datapath,'gdc/clinical_table.csv'), col.names = T, row.names = T)
+```
+
+
+```{r ConsensusClusterPlus}
+bulk_vst = bulkmat_vst_tcga
+variance_genes = apply(bulk_vst, 1,var)
+cutoff = quantile(variance_genes,seq(0,1,by = 0.005))
+
+bulk_vst_variable_tumeur = t(bulk_vst[variance_genes >= cutoff[151], ]) #25%
+#x = fviz_nbclust(bulk_vst_variable_tumeur, kmeans, method = "silhouette")
+#w = fviz_nbclust(bulk_vst_variable_tumeur, kmeans, method = "wss")
+sildata = NULL
+wssdata = NULL
+
+#x$data
+#sildata$rep = as.character(0)
+#wssdata$rep = as.character(0) 
+
+for(i in 1:1000){
+ #ran = sample(1:15000,5)
+  set.seed(i)
+  ran = sample(1:ncol(bulk_vst_variable_tumeur),100)
+  
+  bulk_subsampled = bulk_vst_variable_tumeur[,ran]
+  
+  temp = fviz_nbclust(bulk_subsampled, kmeans, method = "silhouette")
+  tempW = fviz_nbclust(bulk_subsampled, kmeans, method = "wss")
+  
+  temp$data$rep = as.character(i)
+  tempW$data$rep = as.character(i)
+  
+  sildata = rbind(sildata,temp$data)
+  wssdata = rbind(wssdata,tempW$data)
+  
+  if(i %% 100 == 0) print(paste0('Time is: ', Sys.time(), ', i = ', i))
+}
+
+
+sil_nbclust = ggplot(sildata,aes(x =clusters,y = y)) + 
+  geom_point(aes(group = rep),col = 'red',show.legend = F) + 
+  geom_line(aes(group = rep),alpha = 0.025,show.legend = F) + 
+  geom_boxplot(outliers =F) +
+  ylab('Average Silhouette width') +
+  xlab('Number of clusters k') + 
+  ggtitle('optimal Number of clusters') +
+  theme_bw()
+
+wss_nbclust = ggplot(wssdata,aes(x =clusters,y = y)) + 
+  geom_point(aes(group = rep),col = 'red',show.legend = F) + 
+  geom_line(aes(group = rep),alpha = 0.025,show.legend = F) + 
+  geom_boxplot(outliers =F) +
+  ylab('Total withing Sum of Square') +
+  xlab('Number of clusters k') + 
+  ggtitle('optimal Number of clusters') +
+  theme_bw()
+
+
+#
+#ccp = ConsensusClusterPlus(bulk_vst_variable,maxK = 8)
+```
+
+
+```{r clustertable}
+bulk_vst_variable_tumeur.scaled = scale(bulk_vst_variable_tumeur)
+
+#
+p1=fviz_nbclust(bulk_vst_variable_tumeur, kmeans, method = "silhouette")
+p3=fviz_nbclust(bulk_vst_variable_tumeur, kmeans, method = "wss")
+
+
+#
+bulk_vst_variable_tumeur = t(bulk_vst[variance_genes >= cutoff[191], ])
+k2 = kmeans(bulk_vst_variable_tumeur,2 , nstart = 100)
+k3 = kmeans(bulk_vst_variable_tumeur,3 , nstart = 100)
+k4 = kmeans(bulk_vst_variable_tumeur,4 , nstart = 100)
+k5 = kmeans(bulk_vst_variable_tumeur,5 , nstart = 100)
+
+###
+pca_data = PCA(bulk_vst_variable_tumeur, scale = F, graph = F, ncp = 50)
+data.umap = umap::umap(pca_data$ind$coord)
+
+###
+pca_k2_plot <- fviz_cluster(k2, geom = "point", data = bulk_vst_variable_tumeur) + ggtitle("k = 2") + theme_bw()
+pca_k3_plot <- fviz_cluster(k3, geom = "point", data = bulk_vst_variable_tumeur) + ggtitle("k = 3") + theme_bw()
+pca_k4_plot <- fviz_cluster(k4, geom = "point", data = bulk_vst_variable_tumeur) + ggtitle("k = 4") + theme_bw()
+pca_k5_plot <- fviz_cluster(k5, geom = "point", data = bulk_vst_variable_tumeur) + ggtitle("k = 5") + theme_bw()
+pca_k2_plot + pca_k3_plot + pca_k4_plot + pca_k5_plot
+
+
+###
+df = data.frame(x = data.umap$layout[,1],
+           y = data.umap$layout[,2],
+           `clusters (k = 2)` = as.factor(k2$cluster),
+           `clusters (k = 3)` = as.factor(k3$cluster),
+           `clusters (k = 4)` = as.factor(k4$cluster), 
+           `k3 umap` = as.factor(kmeans(data.umap$layout,3,nstart = 100)$cluster),
+           check.names = F) 
+
+cols = RColorBrewer::brewer.pal(n = 9, name = "Set1")
+
+pk2 = df %>% ggplot(aes(x = x, y = y, col = `clusters (k = 2)`)) + geom_point(size = 3) + scale_color_manual(values = cols[1:2]) + theme_bw() + theme(axis.text=element_blank(),axis.ticks=element_blank(),axis.title = element_blank()) + ggtitle('k = 2 (UMAP)')
+pk3 = df %>% ggplot(aes(x = x, y = y, col = `clusters (k = 3)`)) + geom_point(size = 3) + scale_color_manual(values = cols[3:5]) + theme_bw() + theme(axis.text=element_blank(),axis.ticks=element_blank(),axis.title = element_blank()) + ggtitle('k = 3 (UMAP)')
+pk4 = df %>% ggplot(aes(x = x, y = y, col = `clusters (k = 4)`)) + geom_point(size = 3) + scale_color_manual(values = cols[6:9]) + theme_bw() + theme(axis.text=element_blank(),axis.ticks=element_blank(),axis.title = element_blank()) + ggtitle('k = 4 (UMAP)')
+pk3_umap = df %>% ggplot(aes(x = x, y = y, col = `k3 umap`)) + geom_point(size = 3) + scale_color_manual(values = cols[6:9]) + theme_bw() + theme(axis.text=element_blank(),axis.ticks=element_blank(),axis.title = element_blank()) + ggtitle('k = 4 (UMAP)')
+```
+
+
+```{r clustertable}
+cluster_table = data.frame(case_submitter_id = rownames(bulk_vst_variable_tumeur),
+                           check.names = F,
+                           `kmeans (k=2)` = as.factor(k2$cluster),
+                           `kmeans (k=3)` =  as.factor(k3$cluster),
+                           `kmeans (k=4)` =  as.factor(k4$cluster))
+
+
+cluster_clinical_table = merge(cluster_table,clinical_table[,colnames(clinical_table) %in% c('case_submitter_id','ajcc_pathologic_stage')],by =  'case_submitter_id')
+
+#c('case_submitter_id','age_at_index','treatment_type','site_of_resection_or_biopsy','ajcc_pathologic_stage','vital_status')
+
+colnames(cluster_clinical_table)[5] = 'patho_stage'
+cluster_clinical_table$patho_stage[cluster_clinical_table$patho_stage %in% c('Stage I','Stage IA')] = 'stage 1A'
+cluster_clinical_table$patho_stage[cluster_clinical_table$patho_stage %in% c('Stage IB')] = 'stage 1B'
+cluster_clinical_table$patho_stage[cluster_clinical_table$patho_stage %in% c('Stage IIA')] = 'stage 2A'
+cluster_clinical_table$patho_stage[cluster_clinical_table$patho_stage %in% c('Stage IIB')] = 'stage 2B'
+cluster_clinical_table$patho_stage[cluster_clinical_table$patho_stage %in% c('Stage IIIA','Stage IV')] = 'stage 3-4'
+```
+
+
+
+
+
+
+```{r ari score}
+cluster_clinical_table = cluster_clinical_table[!is.na(cluster_clinical_table[,5]),]
+
+ari = matrix(0,nrow = 4,ncol =4)
+
+colnames(ari) = colnames(cluster_clinical_table)[2:5]
+rownames(ari) = colnames(ari)
+
+#
+for(i in 1:4)
+  {
+  for(j in 1:4)
+    {
+    ari[i,j] = abs(aricode::ARI(cluster_clinical_table[,i+1],cluster_clinical_table[,j+1]))
+#    ari[i,j] = abs(aricode::ARI(both[,i],both[,j]))
+    }
+  }
+
+
+#plot
+gcors = ggcorrplot(ari,
+           title = 'Clustering similarity',
+          show.diag = T,
+          type = 'lower',
+          lab_size =6,
+          tl.cex =10,
+          lab = T) + 
+          scale_fill_gradient2(name = 'adjusted\nRand Index',breaks = c(0,0.5, 1), limit = c(0, 1),low = 'blue',mid = 'white',high = 'red')
+```
+
+
+
+```{r save plots}
+pdf(file.path(params$outputpath,paste0('Figure6_clustering_metrics_TCGA.pdf')),width = 16,height = 10)
+(sil_nbclust | wss_nbclust | gcors) / (pca_k2_plot | pca_k3_plot | pca_k4_plot) + plot_layout(heights = c(6,4)) + plot_annotation(tag_levels = 'A')
+dev.off()
+```
+
+
+
+
+# session info 
+```{r session, message= T}
+sessionInfo()
+```
+
+
+
+
+

@@ -1,0 +1,372 @@
+---
+title: "Gexpr clustering"
+author: "Sébastien Renaut (sebastien.renaut@criucpq.ulaval.ca)"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    number_sections: F
+params:
+  datapath: 'C:/Users/renseb01/Documents/clustering/data'
+  outputpath: 'C:/Users/renseb01/Documents/clustering/results'
+  repo: 'C:/Users/renseb01/Documents/clustering'
+   
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = params$repo)
+knitr::opts_chunk$set(echo = F)
+library(ggplot2)
+library(patchwork)
+library(factoextra)
+library(cluster)
+library(DESeq2)
+library(tidyr)
+library(RColorBrewer)
+library(biomaRt)
+library(org.Hs.eg.db)
+```
+
+```{r data}
+clinical_bigtable = read.csv(file.path(params$repo,'../rnaseq/data/clinical_bigtable_v2.csv'), check.names = F)
+
+ #3. get bulkRNAseq data
+  txi = readRDS(file.path(params$repo,'../rnaseq/lord_kallisto/txi.rds'))
+
+  #bulk = as.matrix(txi$abundance)
+  bulk <- round(txi$counts)
+  rownames(bulk) = sapply(strsplit(rownames(bulk), ".",fixed = T), "[",1) #matrix. genes X cells. Floats (Counts). Raw abundance (so TPM)
+  colnames(bulk) = sapply(strsplit(colnames(bulk), ".",fixed = T), "[",5)
+
+  bulk_vst = vst(bulk)
+```
+
+
+```{r choose specific genes}
+#keep some candidate from some study (Wilkerson MD, et al. Differential pathogenesis of lung adenocarcinoma subtypes involving sequence mutations, copy number, chromosomal instability, and methylation. PLoS ONE. 2012;7:e36530. doi: 10.1371/journal.pone.0036530.)
+marker_genes = c('SFTPC','DMBT1','FOLR1','DUSP4','FGL1','TDG','PLAU','G0S2','CXCL10')
+
+#conversion from ENTREZID -> Ensembl
+conversion = select(org.Hs.eg.db, keys = marker_genes, columns = c("ENTREZID", "SYMBOL","ENSEMBL"), keytype = "SYMBOL")
+conversion = conversion[!is.na(conversion$ENSEMBL),]
+conversion = conversion[!duplicated(conversion$ENSEMBL), c(1,3)]
+#conversion$cat = c(rep('bronchoid',3),rep('magnoid',3),rep('squamoid',3))
+  
+#
+#bulk_vst_variable = bulk_vst[variance_genes > cutoff, ]
+bulk_vst_variable_tumeur = t(bulk_vst[,grep('Tumeur',colnames(bulk_vst))])
+bulk_vst_variable_tumeur = bulk_vst_variable_tumeur[,colnames(bulk_vst_variable_tumeur) %in% conversion$ENSEMBL]
+```
+
+```{r choose specific cutoff}
+#keep top 10% most variable genes as a reference for the deconvolution
+variance_genes = apply(bulk_vst[,grep('Tumeur',colnames(bulk_vst))], 1,var)
+cutoff = quantile(variance_genes,seq(0,1,by = 0.05))[20]
+bulk_vst_variable = bulk_vst[variance_genes > cutoff, ]
+bulk_vst_variable_tumeur = t(bulk_vst_variable[,grep('Tumeur',colnames(bulk_vst_variable))])
+```
+
+
+
+```{r more specific genes}
+#bulk_vst_variable = bulk_vst[variance_genes > cutoff, ]
+#bulk_vst_variable = bulk_vst_variable[1:10,]
+bulk_vst_variable_tumeur = t(bulk_vst[,grep('Tumeur',colnames(bulk))])
+  
+
+subtype_genes = read.csv(file.path(params$datapath,'subtype_genes.csv'), header = T) #this is from the table6 of Hayes et al. 2006. JOURNAL OF CLINICAL ONCOLOGY. But not sure it is really meaningful
+bronchoid = strsplit(gsub(' ','',paste0(subtype_genes$Bronchioid,collapse = ', ')),',')[[1]]
+squamoid = strsplit(gsub(' ','',paste0(subtype_genes$Squamoid,collapse = ', ')),',')[[1]]
+magnoid = strsplit(gsub(' ','',paste0(subtype_genes$Magnoid,collapse = ', ')),',')[[1]]
+marker_genes2 = c(bronchoid,magnoid,squamoid)
+
+
+#add more similar genes (five for each marker gene?)
+extra_genes = NULL
+cat = NULL
+for(i in 1:nrow(conversion)){
+  corels=rep(0,ncol(bulk_vst_variable_tumeur))
+ # corels=rep(0,1000)
+  for(j in 1:length(corels)){
+    temp = cor(bulk_vst_variable_tumeur[,colnames(bulk_vst_variable_tumeur) == conversion[i,2]],bulk_vst_variable_tumeur[,j])
+    if(!is.na(temp))corels[j] = temp
+  }
+  extra_genes = c(extra_genes,colnames(bulk_vst_variable_tumeur)[corels > 0.8])
+  cat = c(cat,rep(conversion$cat[i],length(colnames(bulk_vst_variable_tumeur)[corels > 0.8])))
+  print(paste0('Done ',i,', correls = ', corels[corels>0.8],', Time is:', Sys.time()))
+  }
+```
+
+
+```{r consensus plot,eval=F}
+library(ConsensusClusterPlus)
+
+data = bulk_vst[1:1000,]
+
+data = t(bulk_vst_variable_tumeur)
+
+results = ConsensusClusterPlus(d,maxK=10,reps=1000,pItem=0.8,pFeature=1,title='supertop',clusterAlg="km",distance="pearson",seed=1262118388.71279,plot="png")
+
+icl = calcICL(results,title='supertop',plot="png")
+
+```
+
+
+
+
+```{r kmeans functions}
+#kmeans_statistics
+kmeans_statistics <- function(df,k,nstart = 100) {
+  totals = data.frame(k = k, wss = 1:length(k), sil = 1:length(k)) 
+  kmeans_cluster = data.frame(samples = row.names(df))
+  for(k in k){
+    kmeans_temp = kmeans((df), k, nstart = nstart)
+    wss_temp =  kmeans_temp$tot.withinss
+    cluster_temp = as.character(kmeans_temp$cluster)
+    ss_temp <- cluster::silhouette(kmeans_temp$cluster, dist(df))
+    
+    if(length(ss_temp) > 1) totals$sil[k-1] = mean(ss_temp[, 3])
+    if(length(ss_temp) == 1) totals$sil[k-1] = 0
+    totals$wss[k-1] = wss_temp
+    
+    kmeans_cluster[,k] = cluster_temp
+    colnames(kmeans_cluster)[k] = paste0('kmeans (k = ', k,')')
+    
+    print(paste0('Done ',k, ', Time is: ',Sys.time()))
+  }
+  return(list(totals,kmeans_cluster))
+} 
+
+kmeans_statistics = kmeans_statistics(bulk_vst_variable_tumeur,k = 2:7)
+
+#PLOTS
+gplot_sil = ggplot(kmeans_statistics[[1]], aes(x = k ,y = sil)) + 
+    geom_line(linewidth = 2, col = 'grey') + 
+    geom_point(size = 4) +
+    geom_vline(xintercept = 5,col = 'red',linetype = 'dotted',linewidth = 1) +
+    ylab('Silhouette Score') +
+    xlab('Number of Clusters K') +
+    ggtitle('Silhouette plot (nb of clusters)') +
+    theme_bw()
+
+gplot_wss = ggplot(kmeans_statistics[[1]], aes(x = k ,y = wss)) + 
+    geom_line(linewidth = 2, col = 'grey') + 
+    geom_point(size = 4) +
+    ylab('Total within Sum of Square') +
+    xlab('Number of Clusters K') +
+    ggtitle('Elbow plot (nb of clusters)') +
+    theme_bw()
+```
+
+
+
+```{r clustertable}
+cluster_table = data.frame(`Record ID` = sapply(strsplit(rownames(bulk_vst_variable_tumeur), "_",fixed = T), "[",3),
+                           ID = kmeans_statistics[[2]]$samples,
+                           check.names = F,
+                           `kmeans (k=2)` = as.factor(kmeans_statistics[[2]]$`kmeans (k = 2)`),
+                           `kmeans (k=3)` =  as.factor(kmeans_statistics[[2]]$`kmeans (k = 3)`),
+                           `kmeans (k=4)` =  as.factor(kmeans_statistics[[2]]$`kmeans (k = 4)`),
+                           `kmeans (k=5)` =  as.factor(kmeans_statistics[[2]]$`kmeans (k = 5)`),
+                           `kmeans (k=6)` =  as.factor(kmeans_statistics[[2]]$`kmeans (k = 6)`))
+
+clin_sub = clinical_bigtable[,colnames(clinical_bigtable) %in% c('Record ID','Profil_visit_history_Smoking status','Pathology_Tumor_Stage pathologic','Profil_visit_history_Sex at birth','Pathology_Tumor_Grade','Pathology_Tumor_Predominant feature')]
+
+cluster_clinical_table = merge(cluster_table,clin_sub,by =  'Record ID')
+
+cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('1A','1A1','1A2','1A3')] = 'stage 1A'
+cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('1B')] = 'stage 1B'
+cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('2A')] = 'stage 2A'
+cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('2B')] = 'stage 2B'
+cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('3A')] = 'stage 3A'
+cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('','0')] = 'stage 0'
+cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('3B','4A')] = 'stage 3B-4A'
+```
+
+
+
+
+
+ 
+```{r plots, message= T}
+#
+#p3 <- fviz_cluster(k3, geom = "point",  data = df) + ggtitle("k = 3")
+
+#re-order
+cluster_clinical_table = cluster_clinical_table[order(cluster_clinical_table$`kmeans (k=2)`,
+                                                      cluster_clinical_table$`kmeans (k=3)`,
+                                                      cluster_clinical_table$`kmeans (k=4)`,
+                                                      cluster_clinical_table$`kmeans (k=5)`,
+                                                      cluster_clinical_table$`kmeans (k=6)`,
+                                                      cluster_clinical_table$`kmeans (k=5)`,
+                                                      cluster_clinical_table$Pathology_Tumor_Grade,
+                                                      cluster_clinical_table$`Pathology_Tumor_Predominant feature`,
+                                                      cluster_clinical_table$`Pathology_Tumor_Stage pathologic`,
+                                                      cluster_clinical_table$`Profil_visit_history_Sex at birth`,
+                                                      cluster_clinical_table$`Profil_visit_history_Smoking status`),]
+#cluster_clinical_table = cluster_clinical_table[order(cluster_clinical_table$Pathology_Tumor_Grade,cluster_clinical_table$),]
+
+
+#factorise
+cluster_clinical_table$`Record ID` = factor(cluster_clinical_table$`Record ID`,levels = cluster_clinical_table$`Record ID`)
+
+#unknowns
+cluster_clinical_table$`Pathology_Tumor_Predominant feature`[cluster_clinical_table$`Pathology_Tumor_Predominant feature` == ''] = 'unknown'
+cluster_clinical_table$Pathology_Tumor_Grade[cluster_clinical_table$Pathology_Tumor_Grade  == ''] = 'unknown'
+cluster_clinical_table$heigth = 1
+
+#factorise
+cluster_clinical_table$Pathology_Tumor_Grade = as.factor(cluster_clinical_table$Pathology_Tumor_Grade)
+cluster_clinical_table$`Pathology_Tumor_Predominant feature` = as.factor(cluster_clinical_table$`Pathology_Tumor_Predominant feature`)
+cluster_clinical_table$`Pathology_Tumor_Stage pathologic` = as.factor(cluster_clinical_table$`Pathology_Tumor_Stage pathologic`)
+cluster_clinical_table$`Profil_visit_history_Sex at birth` = as.factor(cluster_clinical_table$`Profil_visit_history_Sex at birth`)
+cluster_clinical_table$`Profil_visit_history_Smoking status` = as.factor(cluster_clinical_table$`Profil_visit_history_Smoking status`)
+
+
+#pivot
+data_longer = cluster_clinical_table %>% pivot_longer(cols = c(3:12),names_to='method', values_to = 'clusterID')
+data_longer$heigth = 1
+
+#factorise for colors
+#data_longer$clusterID = factor(data_longer$clusterID, levels = c(1,2,3,4,5,sort(unique(cluster_clinical_table$Pathology_Tumor_Grade))[1:4],sort(unique(cluster_clinical_table$`Pathology_Tumor_Predominant feature`))))
+
+#set-up colors
+colors = c(brewer.pal(n = 9, name = "Set1")[c(1:6)],
+           brewer.pal(n = 11, name = "Spectral")[c(1,3,5,7)],
+           'black',
+            brewer.pal(n = 9, name = "Set1")[c(7,6,8,9)],'white',
+           brewer.pal(n = 9, name = "Set3"),
+           brewer.pal(n = 9, name = "Set1")[c(1:4)]
+           )
+#
+#
+clustering_plot = ggplot(data_longer,aes(fill=clusterID, y=heigth, x=`Record ID`)) + 
+    geom_bar(position="stack", stat="identity",width =1)  +
+    facet_wrap(.~method,nrow = 10) +
+    scale_fill_manual(values = colors) + 
+    theme_bw() +
+    theme(axis.title.y=element_blank(),
+              axis.text.y=element_blank(),
+              axis.ticks.y=element_blank()) +
+    guides(fill = guide_legend(ncol = 1))
+  
+
+```
+
+
+
+```{r PCA}
+k2 = kmeans(bulk_vst_variable_tumeur,2,nstart = 100)
+k3 = kmeans(bulk_vst_variable_tumeur,3,nstart = 100)
+k4 = kmeans(bulk_vst_variable_tumeur,4,nstart = 100)
+k5 = kmeans(bulk_vst_variable_tumeur,5,nstart = 100)
+pca_k2_plot <- fviz_cluster(k2, geom = "point",  data = bulk_vst_variable_tumeur) + ggtitle("k = 2") + theme_bw()
+pca_k3_plot <- fviz_cluster(k3, geom = "point",  data = bulk_vst_variable_tumeur) + ggtitle("k = 3") + theme_bw()
+pca_k4_plot <- fviz_cluster(k4, geom = "point",  data = bulk_vst_variable_tumeur) + ggtitle("k = 4") + theme_bw()
+pca_k5_plot <- fviz_cluster(k5, geom = "point",  data = bulk_vst_variable_tumeur) + ggtitle("k = 5") + theme_bw()
+
+pca_k2_plot + pca_k3_plot + pca_k4_plot + pca_k5_plot
+```
+
+
+
+```{r visualise}
+bulk_vst_variable_tumeur.scaled = scale(bulk_vst_variable_tumeur)
+
+#kmeans
+k3 = kmeans(bulk_vst_variable_tumeur.scaled,3,nstart = 100)
+pca_k3 <- fviz_cluster(k3, geom = "point",  data = bulk_vst_variable_tumeur.scaled) + ggtitle("k = 3") + theme_bw()
+sil <- silhouette(k3$cluster, dist(bulk_vst_variable_tumeur.scaled))
+sil_k = fviz_silhouette(sil)
+
+# PAM clustering
+pam.res <- pam(bulk_vst_variable_tumeur, 5)
+pca_pam =fviz_cluster(pam.res, geom = "point", data = bulk_vst_variable_tumeur) + theme_minimal()
+sil_pam = fviz_silhouette(pam.res)
+
+# Hierarchical clustering
+hc.cut = hcut(bulk_vst_variable_tumeur.scaled, k = 3, hc_method = "ward.D2")
+hc_hc = fviz_dend(hc.cut, show_labels = FALSE, rect = TRUE)
+# Visualize silhouette information
+sil_hc = fviz_silhouette(hc.cut)
+
+(hc_hc + sil_hc)
+
+(pca_k3 + sil_k) /
+(pca_pam + sil_pam) /
+(hc_hc + sil_hc)
+
+heatmap((bulk_vst_variable_tumeur.scaled),scale = 'none')
+```
+
+
+
+```{r all metrics}
+bulk_vst_variable_tumeur.scaled = scale(bulk_vst_variable_tumeur)
+
+nb <- NbClust::NbClust(bulk_vst_variable_tumeur.scaled, distance = "euclidean", min.nc = 2,
+        max.nc = 10, method = "ward.D2", index ="all")
+
+#nb <- NbClust(iris.scaled, distance = "euclidean", min.nc = 2,
+ #       max.nc = 10, method = "complete", index ="all")
+
+fviz_nbclust(bulk_vst_variable_tumeur.scaled, kmeans, method = "silhouette")
+fviz_nbclust(bulk_vst_variable_tumeur, hcut, method = "silhouette")
+fviz_nbclust(bulk_vst_variable_tumeur.scaled, kmeans, method = "wss")
+```
+
+
+
+```{r ari score}
+library(ggcorrplot)
+ari = matrix(0,nrow = 10,ncol =10)
+
+
+colnames(ari) = gsub('Profil_visit_history_','',colnames(cluster_clinical_table)[3:12])
+colnames(ari) = gsub('Pathology_Tumor_','',colnames(ari))
+colnames(ari) = gsub('Predominant feature','Feature',colnames(ari))
+colnames(ari) = gsub('Stage pathologic','Stage (patho)',colnames(ari))
+colnames(ari) = gsub('Smoking status','Smoking',colnames(ari))
+rownames(ari) = colnames(ari)
+
+#
+for(i in 1:10)
+  {
+  for(j in 1:10)
+    {
+    ari[i,j] = abs(aricode::ARI(cluster_clinical_table[,i+2],cluster_clinical_table[,j+2]))
+  }
+  }
+
+
+#plot
+gcors = ggcorrplot(ari,
+           title = 'Clustering similarity',
+          show.diag = T,
+          type = 'lower',
+          lab_size = 2,
+          tl.cex =6,
+          lab = T) + 
+          scale_fill_gradient2(name = 'adjusted\nRand Index',breaks = c(0,0.5, 1), limit = c(0, 1),low = 'blue',mid = 'white',high = 'red')
+```
+
+
+```{r save plots}
+pdf(file.path(params$outputpath,paste0('Figure2_clustering_metrics.pdf')),width = 8,height = 6)
+(gplot_sil | gplot_wss)  / (pca_k4_plot | gcors) + plot_annotation(tag_levels = 'A')
+dev.off()
+
+#save it 
+pdf(file.path(params$outputpath,paste0('Figure1_clustering.pdf')),width = 16,height = 10)
+clustering_plot
+dev.off()
+```
+
+
+# session info 
+```{r session, message= T}
+sessionInfo()
+```
+     
+     
