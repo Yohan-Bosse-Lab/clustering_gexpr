@@ -7,7 +7,7 @@ output:
     number_sections: F
 params:
   datapath: 'C:/Users/renseb01/Documents/clustering_gexpr/data'
-  outputpath: 'C:/Users/renseb01/Documents/clustering_gepxr/results/Nov2024'
+  outputpath: 'C:/Users/renseb01/Documents/clustering_gexpr/results/Nov2024'
   repo: 'C:/Users/renseb01/Documents/clustering'
    
 ---
@@ -27,6 +27,7 @@ library(tidyr)
 library(RColorBrewer)
 library(ggcorrplot)
 library(ConsensusClusterPlus)
+library(FactoMineR)
 ```
 
 
@@ -87,6 +88,8 @@ write.table(clinical_table,file.path(params$datapath,'gdc/clinical_table.csv'), 
 
 
 ```{r ConsensusClusterPlus}
+bulkmat_vst_tcga = read.table(file.path(params$datapath,'gdc/bulkmat_tcga.csv'), header = T, check.names = F)
+
 bulk_vst = bulkmat_vst_tcga
 variance_genes = apply(bulk_vst, 1,var)
 cutoff = quantile(variance_genes,seq(0,1,by = 0.005))
@@ -96,6 +99,7 @@ bulk_vst_variable_tumeur = t(bulk_vst[variance_genes >= cutoff[151], ]) #25%
 #w = fviz_nbclust(bulk_vst_variable_tumeur, kmeans, method = "wss")
 sildata = NULL
 wssdata = NULL
+winner = NULL
 
 #x$data
 #sildata$rep = as.character(0)
@@ -116,30 +120,33 @@ for(i in 1:1000){
   
   sildata = rbind(sildata,temp$data)
   wssdata = rbind(wssdata,tempW$data)
+  winner = c(winner,temp$data$clusters[temp$data$y == max(temp$data$y)])
   
   if(i %% 100 == 0) print(paste0('Time is: ', Sys.time(), ', i = ', i))
 }
 
+print(table(winner)/1000)
+
 
 sil_nbclust = ggplot(sildata,aes(x =clusters,y = y)) + 
-  geom_point(aes(group = rep),col = 'red',show.legend = F) + 
-  geom_line(aes(group = rep),alpha = 0.025,show.legend = F) + 
+  geom_point(aes(group = rep),col = 'black',show.legend = F) + 
+  geom_line(aes(group = rep),alpha = 0.025,show.legend = F,col = 'red') + 
   geom_boxplot(outliers =F) +
-  ylab('Average Silhouette width') +
-  xlab('Number of clusters k') + 
-  ggtitle('optimal Number of clusters') +
+  ylab('Average Silhouette Score') +
+  xlab('Number of Clusters k') + 
+#  ggtitle('optimal Number of clusters') +
   theme_bw()
 
-wss_nbclust = ggplot(wssdata,aes(x =clusters,y = y)) + 
-  geom_point(aes(group = rep),col = 'red',show.legend = F) + 
-  geom_line(aes(group = rep),alpha = 0.025,show.legend = F) + 
+wss_nbclust = ggplot(wssdata,aes(x =clusters,y = y/10000)) + 
+  geom_point(aes(group = rep),col = 'black',show.legend = F) + 
+  geom_line(aes(group = rep),alpha = 0.025,show.legend = F,col ='red') + 
   geom_boxplot(outliers =F) +
-  ylab('Total withing Sum of Square') +
-  xlab('Number of clusters k') + 
-  ggtitle('optimal Number of clusters') +
+  ylab('Total Within Sum of Square (1e+04)') +
+  xlab('Number of Clusters k') + 
+ # ggtitle('optimal Number of clusters') +
   theme_bw()
 
-
+table(winner)
 #
 #ccp = ConsensusClusterPlus(bulk_vst_variable,maxK = 8)
 ```
@@ -165,19 +172,19 @@ pca_data = PCA(bulk_vst_variable_tumeur, scale = F, graph = F, ncp = 50)
 data.umap = umap::umap(pca_data$ind$coord)
 
 ###
-pca_k2_plot <- fviz_cluster(k2, geom = "point", data = bulk_vst_variable_tumeur) + ggtitle("k = 2") + theme_bw()
-pca_k3_plot <- fviz_cluster(k3, geom = "point", data = bulk_vst_variable_tumeur) + ggtitle("k = 3") + theme_bw()
-pca_k4_plot <- fviz_cluster(k4, geom = "point", data = bulk_vst_variable_tumeur) + ggtitle("k = 4") + theme_bw()
-pca_k5_plot <- fviz_cluster(k5, geom = "point", data = bulk_vst_variable_tumeur) + ggtitle("k = 5") + theme_bw()
+pca_k2_plot <- fviz_cluster(k2, geom = "point", data = bulk_vst_variable_tumeur, palette = 'Set1') + ggtitle("k = 2") + theme_bw()
+pca_k3_plot <- fviz_cluster(k3, geom = "point", data = bulk_vst_variable_tumeur, palette = 'Set1') + ggtitle("k = 3") + theme_bw()
+pca_k4_plot <- fviz_cluster(k4, geom = "point", data = bulk_vst_variable_tumeur, palette = 'Set1') + ggtitle("k = 4") + theme_bw()
+pca_k5_plot <- fviz_cluster(k5, geom = "point", data = bulk_vst_variable_tumeur, palette = 'Set1') + ggtitle("k = 5") + theme_bw()
 pca_k2_plot + pca_k3_plot + pca_k4_plot + pca_k5_plot
 
 
 ###
 df = data.frame(x = data.umap$layout[,1],
            y = data.umap$layout[,2],
-           `clusters (k = 2)` = as.factor(k2$cluster),
-           `clusters (k = 3)` = as.factor(k3$cluster),
-           `clusters (k = 4)` = as.factor(k4$cluster), 
+           `k = 2` = as.factor(k2$cluster),
+           `k = 3` = as.factor(k3$cluster),
+           `k = 4` = as.factor(k4$cluster), 
            `k3 umap` = as.factor(kmeans(data.umap$layout,3,nstart = 100)$cluster),
            check.names = F) 
 
@@ -193,9 +200,9 @@ pk3_umap = df %>% ggplot(aes(x = x, y = y, col = `k3 umap`)) + geom_point(size =
 ```{r clustertable}
 cluster_table = data.frame(case_submitter_id = rownames(bulk_vst_variable_tumeur),
                            check.names = F,
-                           `kmeans (k=2)` = as.factor(k2$cluster),
-                           `kmeans (k=3)` =  as.factor(k3$cluster),
-                           `kmeans (k=4)` =  as.factor(k4$cluster))
+                           `k = 2` = as.factor(k2$cluster),
+                           `k = 3` =  as.factor(k3$cluster),
+                           `k = 4` =  as.factor(k4$cluster))
 
 
 cluster_clinical_table = merge(cluster_table,clinical_table[,colnames(clinical_table) %in% c('case_submitter_id','ajcc_pathologic_stage')],by =  'case_submitter_id')
@@ -221,6 +228,7 @@ cluster_clinical_table = cluster_clinical_table[!is.na(cluster_clinical_table[,5
 ari = matrix(0,nrow = 4,ncol =4)
 
 colnames(ari) = colnames(cluster_clinical_table)[2:5]
+colnames(ari) = gsub('patho_stage','Stage',colnames(ari))
 rownames(ari) = colnames(ari)
 
 #
@@ -240,7 +248,7 @@ gcors = ggcorrplot(ari,
           show.diag = T,
           type = 'lower',
           lab_size =6,
-          tl.cex =10,
+          tl.cex =16,
           lab = T) + 
           scale_fill_gradient2(name = 'adjusted\nRand Index',breaks = c(0,0.5, 1), limit = c(0, 1),low = 'blue',mid = 'white',high = 'red')
 ```
@@ -248,7 +256,7 @@ gcors = ggcorrplot(ari,
 
 
 ```{r save plots}
-pdf(file.path(params$outputpath,paste0('Figure6_clustering_metrics_TCGA.pdf')),width = 16,height = 10)
+pdf(file.path(params$outputpath,paste0('Figure2_clustering_metrics_TCGA.pdf')),width = 16,height = 10)
 (sil_nbclust | wss_nbclust | gcors) / (pca_k2_plot | pca_k3_plot | pca_k4_plot) + plot_layout(heights = c(6,4)) + plot_annotation(tag_levels = 'A')
 dev.off()
 ```

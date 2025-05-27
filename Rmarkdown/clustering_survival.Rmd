@@ -7,9 +7,8 @@ output:
     number_sections: F
 params:
   datapath: 'C:/Users/renseb01/Documents/clustering_gexpr/data'
-  outputpath: 'C:/Users/renseb01/Documents/clustering_gexpr/results/Nov2024'
+  outputpath: 'C:/Users/renseb01/Documents/clustering_gexpr/results/April2025'
   repo: 'C:/Users/renseb01/Documents/clustering'
-   
 ---
 
 
@@ -20,6 +19,7 @@ knitr::opts_chunk$set(echo = F)
 library(ggplot2)
 library(patchwork)
 library(factoextra)
+library(FactoMineR)
 library(cluster)
 library(DESeq2)
 library(dplyr)
@@ -30,13 +30,13 @@ library(org.Hs.eg.db)
 library(ComplexUpset)
 library(survival)
 library(survminer)
-
+library(readxl)
 ```
 
 
 
 ```{r data}
-clinical_bigtable = read.csv(file.path(params$repo,'../rnaseq/data/clinical_bigtable_v2.csv'), check.names = F)
+clinical_bigtable = read.csv(file.path(params$repo,'../rnaseq/data/clinical_bigtable_v3.csv'), check.names = F)
 
  #3. get bulkRNAseq data
   txi = readRDS(file.path(params$repo,'../rnaseq/lord_kallisto/txi.rds'))
@@ -59,15 +59,21 @@ Der2014 = c('ATP1B1','TRIM14','FAM64A','FOSL2','HEXIM1','MB','L1CAM','UMPS','EDN
 Shukla2016 = c('RHOV','CD109','FRRS1','LINC00941') #Shukla et al. 2016 Development of a RNA-Seq Based Prognostic Signature in Lung Adenocarcinoma
 Wistuba2013 = c('ASPM','CDCA8','MCM10','FOXM1','CDC20','CDKN3','BIRC5','DLGAP5','KIF20A','BUB1B','PRC1','TK1','CEP55','PBK','RAD54L','NUSAP1','RRM2','KIAA0101','ORC6L','RAD51','CENPM','SKA1','CENPF','KIF11','PTTG1','CDC2','DTL','PLK1','CDCA3','ASF1B','TOP2A')
 Peinado2022 = c('APOBEC3B','GOLM1','FAM117A','KCNQ1OT1','PCDHB2','USP43') #Peinado-Serrano, Javier, et al. "A six-gene prognostic and predictive radiotherapy-based signature for early and locally advanced stages in non-small-cell lung cancer." Cancers 14.9 (2022): 2054.
+Biswas2019 = c('ANLN','ASPM','CDCA4','ERRFI1','FURIN','GOLGA8A','ITGA6','JAG1','LRP12','MAFF','MRPS17','PLK1','PNP','PPP1R13L','PRKCA','PTTG1','PYGB','RPP25','SCPEP1','SLC46A3','SNX7','TPBG','XBP1')
 
+
+
+Lamaze2024 = read_xlsx(file.path(params$datapath,"Lamaze_genes_predictors.xlsx"))
+Lamaze2024 = Lamaze2024$Symbol[Lamaze2024$bioortho ==T]
+#Lamaze2024 = Lamaze2024$Symbol[Lamaze2024$bio30 ==T]
 
 #Validation of a Proliferation-Based Expression Signature as Prognostic Marker in Early Stage Lung Adenocarcinoma 
-predictors = list(c('top5','SFTPC'),Bianchi2007,Kratz2012,Der2014,Wilkerson2012,Raz2008,Shukla2016,Wistuba2013,Peinado2022)
-names(predictors) = c('top5%','Bianchi 2007','Kratz 2012','Der 2014','Wilkerson 2012','Raz 2008','Shukla 2016','Wistuba 2013','Peinado-Serrano 2022')
+predictors = list(c('top5','SFTPC'),Bianchi2007,Kratz2012,Der2014,Wilkerson2012,Raz2008,Shukla2016,Wistuba2013,Peinado2022,Lamaze2024,Biswas2019)
+names(predictors) = c('top5%','Bianchi 2007','Kratz 2012','Der 2014','Wilkerson 2012','Raz 2008','Shukla 2016','Wistuba 2013','Peinado-Serrano 2022','Lamaze 2024','Biswas 2019')
 sil_plots = list() 
 
 #conversion from ENTREZID -> Ensembl
-for(i in 1:9) {
+for(i in 1:11) {
   conversion = biomaRt::select(org.Hs.eg.db, keys = predictors[[i]], columns = c("ENTREZID", "SYMBOL","ENSEMBL"), keytype = "SYMBOL")
   conversion = conversion[!is.na(conversion$ENSEMBL),]
   conversion = conversion[!duplicated(conversion$ENSEMBL), c(1,3)]
@@ -109,8 +115,9 @@ for(i in 1:9) {
   }
   
   if(i >1){
+    k = 2
     sil_plots[[i]] = fviz_nbclust(bulk_vst_variable_tumeur, kmeans, method = "silhouette")
-    marker_based_signatures = kmeans(bulk_vst_variable_tumeur,3,nstart = 100)
+    marker_based_signatures = kmeans(bulk_vst_variable_tumeur,k,nstart = 100)
    # if((i == 3) | (i == 5)) marker_based_signatures = kmeans(bulk_vst_variable_tumeur,3,nstart = 100)
   
     marker_based_signatures$cluster[marker_based_signatures$cluster==1] = paste0('cluster 1_',names(predictors)[[i]])
@@ -126,14 +133,17 @@ for(i in 1:9) {
     if(i == 7) cluster_table$Shukla2016 =  as.factor(marker_based_signatures$cluster)
     if(i == 8) cluster_table$Wistuba2013 =  as.factor(marker_based_signatures$cluster)
     if(i == 9) cluster_table$Peinado2022 =  as.factor(marker_based_signatures$cluster)
+    if(i == 10) cluster_table$Lamaze2024 =  as.factor(marker_based_signatures$cluster)
+    if(i == 11) cluster_table$Biswas2019 =  as.factor(marker_based_signatures$cluster)
   
     #cluster_table$random =  as.factor(sample(c('cluster 1_random N','cluster 2_random N'),515,replace =T))
     #cluster_table$random =  as.factor(sample(c('cluster 1_random N','cluster 2_random N','cluster 3_random N'),515,replace =T))
     #cluster_table$random =  as.factor(sample(c('cluster 1_random 3','cluster 2_random 3','cluster 3_random 3'),515,replace =T))
 
     #one every cluster is calculated, just put everything together.
-    if(i == 9) {
+    if(i == 11) {
       clinical_cluster = merge(cluster_table,clinical_bigtable,by = 'Record ID')
+      print(paste0('Dimensions of,',nrow(clinical_cluster)))
       k2_grouped = clinical_cluster %>% group_by(k2) %>% summarise(pfs = mean(`Follow-up_PFS (2022)`,na.rm =T), n = n())
       k3_grouped = clinical_cluster %>% group_by(k3) %>% summarise(pfs = median(`Follow-up_PFS (2022)`,na.rm =T), n = n())
       k4_grouped = clinical_cluster %>% group_by(k4) %>% summarise(pfs = mean(`Follow-up_PFS (2022)`,na.rm =T), n = n())
@@ -148,7 +158,8 @@ for(i in 1:9) {
       kder_grouped = clinical_cluster %>% group_by(Der2014) %>% summarise(pfs = mean(`Follow-up_PFS (2022)`,na.rm =T), n = n())
       
       kpeinado_grouped = clinical_cluster %>% group_by(Peinado2022) %>% summarise(pfs = mean(`Follow-up_PFS (2022)`,na.rm =T), n = n())
-      
+      lamaze_grouped = clinical_cluster %>% group_by(Lamaze2024) %>% summarise(pfs = mean(`Follow-up_PFS (2022)`,na.rm =T), n = n())
+      biswas_grouped = clinical_cluster %>% group_by(Biswas2019) %>% summarise(pfs = mean(`Follow-up_PFS (2022)`,na.rm =T), n = n())
       #ran_grouped = clinical_cluster %>% group_by(random) %>% summarise(pfs = mean(`Follow-up_PFS (2022)`,na.rm =T), n = n())
       }
     }
@@ -164,38 +175,79 @@ heatmap(t(scale(bulk_vst_variable_tumeur)),scale = 'none')
 
 
 ```{r survival}
-#
-clinical_cluster$age = NA
-clinical_cluster$age[clinical_cluster$`Profil_visit_history_Age at diagnosis`>= 75] = '>75'
-clinical_cluster$age[clinical_cluster$`Profil_visit_history_Age at diagnosis`< 60] = '<60 years old'
-clinical_cluster$age[clinical_cluster$`Profil_visit_history_Age at diagnosis`>= 60 & clinical_cluster$`Profil_visit_history_Age at diagnosis` < 75] = '60-75'
-clinical_cluster$age = factor(clinical_cluster$age,levels = unique(clinical_cluster$age)[c(3,1,4)])
+clinical_cluster$`Tumor volume\n(cm3)` = NA
+volume_quants = quantile(clinical_cluster$Pathology_Tumor_size_tumxyz)
+
+clinical_cluster$`Tumor volume\n(cm3)`[clinical_cluster$Pathology_Tumor_size_tumxyz <= volume_quants[2]] = '<5.6'
+clinical_cluster$`Tumor volume\n(cm3)`[(clinical_cluster$Pathology_Tumor_size_tumxyz > volume_quants[2]) & (clinical_cluster$Pathology_Tumor_size_tumxyz <= volume_quants[3])] = '5.6-12'
+clinical_cluster$`Tumor volume\n(cm3)`[(clinical_cluster$Pathology_Tumor_size_tumxyz > volume_quants[3]) & (clinical_cluster$Pathology_Tumor_size_tumxyz <= volume_quants[4])] = '12-26.3'
+clinical_cluster$`Tumor volume\n(cm3)`[clinical_cluster$Pathology_Tumor_size_tumxyz > volume_quants[4]] = '>26.3'
+clinical_cluster$`Tumor volume\n(cm3)` = factor(clinical_cluster$`Tumor volume\n(cm3)`,levels = unique(clinical_cluster$`Tumor volume\n(cm3)`)[c(1,4,2,3)])
 
 #
-clinical_cluster$packyr = NA
-clinical_cluster$packyr[clinical_cluster$`Profil_visit_history_Pack/Year`>38] = '>38pk/yr'
-clinical_cluster$packyr[clinical_cluster$`Profil_visit_history_Pack/Year`<=38] = '<38pk/yr'
-clinical_cluster$packyr = factor(clinical_cluster$packyr,levels = unique(clinical_cluster$packyr)[3:1])
+clinical_cluster$Age = NA
+clinical_cluster$Age[clinical_cluster$`Profil_visit_history_Age at diagnosis`>= 71] = '>75'
+clinical_cluster$Age[clinical_cluster$`Profil_visit_history_Age at diagnosis`< 60] = '<60 years old'
+clinical_cluster$Age[clinical_cluster$`Profil_visit_history_Age at diagnosis`>= 60 & clinical_cluster$`Profil_visit_history_Age at diagnosis` < 65] = '60-65'
+clinical_cluster$Age[clinical_cluster$`Profil_visit_history_Age at diagnosis`>= 65 & clinical_cluster$`Profil_visit_history_Age at diagnosis` < 71] = '65-71'
+clinical_cluster$Age = factor(clinical_cluster$Age,levels = unique(clinical_cluster$Age)[c(5,4,1,2)])
+
+#
+clinical_cluster$`Pack year` = NA
+clinical_cluster$`Pack year`[clinical_cluster$`Profil_visit_history_Pack/Year`<23] = '<23pk/yr'
+clinical_cluster$`Pack year`[clinical_cluster$`Profil_visit_history_Pack/Year`>=49] = '>49'
+clinical_cluster$`Pack year`[(clinical_cluster$`Profil_visit_history_Pack/Year`>=23) & (clinical_cluster$`Profil_visit_history_Pack/Year`<38)] = '23-38'
+clinical_cluster$`Pack year`[(clinical_cluster$`Profil_visit_history_Pack/Year`>=38) & (clinical_cluster$`Profil_visit_history_Pack/Year`<49)] = '38-49'
+clinical_cluster$`Pack year` = factor(clinical_cluster$`Pack year`,levels = unique(clinical_cluster$`Pack year`)[c(4,3,2,5)])
 
 #
 clinical_cluster$os = clinical_cluster$`Follow-up_O.S. (2022)`
 clinical_cluster$status = ifelse(clinical_cluster$`Profil_visit_history_Vital status` == "Alive",0,1)
-clinical_cluster$pfs = clinical_cluster$`Follow-up_PFS (2022)`
-clinical_cluster$sex = clinical_cluster$`Profil_visit_history_Sex at birth`
-clinical_cluster$sex = factor(clinical_cluster$sex,levels = c('Female','Male'))
-clinical_cluster$patho_grade = clinical_cluster$Pathology_Tumor_Grade 
-clinical_cluster$patho_grade[clinical_cluster$patho_grade  ==''] = 'unknown'
-clinical_cluster$patho_grade = factor(clinical_cluster$patho_grade)
-clinical_cluster$patho_feature = clinical_cluster$`Pathology_Tumor_Predominant feature`
-clinical_cluster$patho_feature[clinical_cluster$patho_feature == ''] = 'unknown'
-clinical_cluster$patho_feature = factor(clinical_cluster$patho_feature, levels = c('Lepidic','Acinar','Micropapillary','Papillary','Solid','unknown'))
+clinical_cluster$pfs = clinical_cluster$`Follow-up_PFS (2022)`/365
+clinical_cluster$Sex = clinical_cluster$`Profil_visit_history_Sex at birth`
+clinical_cluster$Sex = factor(clinical_cluster$Sex,levels = c('Female','Male'))
 
-clinical_cluster$Smoking_status = clinical_cluster$`Profil_visit_history_Smoking status`
-clinical_cluster$Smoking_status = factor(clinical_cluster$Smoking_status,levels = c('Non smoker','Passive smoker','Former smoker','Smoker'))
+
+clinical_cluster$Grade = clinical_cluster$Pathology_Tumor_Grade 
+clinical_cluster$Grade = paste0('G',clinical_cluster$Grade)
+clinical_cluster$Grade[clinical_cluster$Grade  =='Gn/a'] = 'unknown'
+
+#clinical_cluster$Grade[clinical_cluster$Grade  ==''] = 'unknown'
+#clinical_cluster$Grade[clinical_cluster$Grade  =='G4 undifferentiated'] = 'G3 poorly differentiated'
+#clinical_cluster$Grade = sapply(strsplit(clinical_cluster$Grade, " ",fixed = T),"[",1)
+#clinical_cluster$Grade[clinical_cluster$Grade == 'G3'] = 'G3-4' 
+clinical_cluster$Grade = factor(clinical_cluster$Grade)
+
+#clinical_cluster$`Predominant\nfeature`[clinical_cluster$`Predominant\nfeature` == 'Micropapillary'] = 'Micropap.'
+#clinical_cluster$`Predominant\nfeature` = factor(clinical_cluster$`Predominant\nfeature`, levels = c('Lepidic','Acinar','Micropap.','Papillary','Solid','unknown'))
+
+
+###
+clinical_cluster$`Predominant\nfeature` = 'Intermediate\n(Acinar|Pap)'
+clinical_cluster$`Predominant\nfeature`[clinical_cluster$`Pathology_Tumor_Predominant feature` == 'Lepidic'] = 'Lepidic (low)'
+clinical_cluster$`Predominant\nfeature`[clinical_cluster$`Pathology_Tumor_Predominant feature` == ''] = 'unknown'
+clinical_cluster$`Predominant\nfeature`[(clinical_cluster$`Pathology_Tumor_Solid %` >= 20) | (clinical_cluster$`Pathology_Tumor_Micropapillary %` >= 20) | (clinical_cluster$`Pathology_Tumor_Fused glands %` >= 20) | (clinical_cluster$`Pathology_Tumor_Cribriform %` >= 20)] = 'High (Solid | \nMpap|Complex)'
+clinical_cluster$`Predominant\nfeature` = factor(clinical_cluster$`Predominant\nfeature`, levels = c('Lepidic (low)','Intermediate\n(Acinar|Pap)','High (Solid | \nMpap|Complex)','unknown'))
+###
+
+
+clinical_cluster$`Smoking\nstatus` = clinical_cluster$`Profil_visit_history_Smoking status`
+clinical_cluster$`Smoking\nstatus` = gsub(' smoker','',clinical_cluster$`Smoking\nstatus`)
+clinical_cluster$`Smoking\nstatus` = gsub('Smoker','Current',clinical_cluster$`Smoking\nstatus`)
+clinical_cluster$`Smoking\nstatus` = gsub('Passive','Non',clinical_cluster$`Smoking\nstatus`)
+clinical_cluster$`Smoking\nstatus` = factor(clinical_cluster$`Smoking\nstatus`,levels = c('Non','Former','Current'))
 
 clinical_cluster$k2 = factor(clinical_cluster$k2,k2_grouped[[1]][order(k2_grouped$pfs,decreasing = T)])
 clinical_cluster$k3 = factor(clinical_cluster$k3,k3_grouped[[1]][order(k3_grouped$pfs,decreasing = T)])
 clinical_cluster$k4 = factor(clinical_cluster$k4,k4_grouped[[1]][order(k4_grouped$pfs,decreasing = T)])
+
+#percentage of tumor.
+clinical_cluster$`Pathology_Tumor_Percentage of Tumor`[is.na(clinical_cluster$`Pathology_Tumor_Percentage of Tumor`)] = mean(clinical_cluster$`Pathology_Tumor_Percentage of Tumor`,na.rm = T)
+clinical_cluster$`Percentage\nof Tumor` = '<35% tumor'
+clinical_cluster$`Percentage\nof Tumor`[(clinical_cluster$`Pathology_Tumor_Percentage of Tumor` >= 35) & (clinical_cluster$`Pathology_Tumor_Percentage of Tumor` < 55)] = '35-55%'
+clinical_cluster$`Percentage\nof Tumor`[(clinical_cluster$`Pathology_Tumor_Percentage of Tumor` >= 55) & (clinical_cluster$`Pathology_Tumor_Percentage of Tumor` < 75)] = '55-75%'
+clinical_cluster$`Percentage\nof Tumor`[clinical_cluster$`Pathology_Tumor_Percentage of Tumor` >= 75] = '>75%'
+clinical_cluster$`Percentage\nof Tumor` = factor(clinical_cluster$`Percentage\nof Tumor`,levels = unique(clinical_cluster$`Percentage\nof Tumor`)[c(3,1,2,4)])
 
 #random grouping are a bit odd, because they are non-significant.
 #clinical_cluster$random2 = factor(clinical_cluster$random2,ran2_grouped[[1]][order(ran2_grouped$pfs,decreasing = T)])
@@ -210,17 +262,20 @@ clinical_cluster$Wistuba2013 = factor(clinical_cluster$Wistuba2013,kwistuba_grou
 clinical_cluster$Shukla2016 = factor(clinical_cluster$Shukla2016,kshukla_grouped[[1]][order(kshukla_grouped$pfs,decreasing = T)])
 clinical_cluster$Raz2008 = factor(clinical_cluster$Raz2008,kraz_grouped[[1]][order(kraz_grouped$pfs,decreasing = T)])
 clinical_cluster$Peinado2022 = factor(clinical_cluster$Peinado2022,kpeinado_grouped[[1]][order(kpeinado_grouped$pfs,decreasing = T)])
+clinical_cluster$Lamaze2024 = factor(clinical_cluster$Lamaze2024,lamaze_grouped[[1]][order(lamaze_grouped$pfs,decreasing = T)])
+clinical_cluster$Biswas2019 = factor(clinical_cluster$Biswas2019,biswas_grouped[[1]][order(biswas_grouped$pfs,decreasing = T)])
 
+clinical_cluster$Stage = clinical_cluster$`Pathology_Tumor_Stage pathologic`
+clinical_cluster$Stage[clinical_cluster$Stage %in% c('1A','1A1','1A2','1A3')] = '1A'
+#clinical_cluster$Stage[clinical_cluster$Stage %in% c('1A','1A1')] = '1A'
 
-clinical_cluster$patho_stage = clinical_cluster$`Pathology_Tumor_Stage pathologic`
-clinical_cluster$patho_stage[clinical_cluster$patho_stage %in% c('1A','1A1','1A2','1A3')] = 'stage 1A'
-clinical_cluster$patho_stage[clinical_cluster$patho_stage %in% c('1B')] = 'stage 1B'
-clinical_cluster$patho_stage[clinical_cluster$patho_stage %in% c('2A')] = 'stage 2A'
-clinical_cluster$patho_stage[clinical_cluster$patho_stage %in% c('2B')] = 'stage 2B'
-clinical_cluster$patho_stage[clinical_cluster$patho_stage %in% c('3A')] = 'stage 3-4'
-clinical_cluster$patho_stage[clinical_cluster$patho_stage %in% c('','0')] = 'stage 3-4'
-clinical_cluster$patho_stage[clinical_cluster$patho_stage %in% c('3B','4A')] = 'stage 3-4'
-clinical_cluster$patho_stage = factor(clinical_cluster$patho_stage)
+clinical_cluster$Stage[clinical_cluster$Stage %in% c('1B')] = '1B'
+clinical_cluster$Stage[clinical_cluster$Stage %in% c('2A')] = '2A'
+clinical_cluster$Stage[clinical_cluster$Stage %in% c('2B')] = '2B'
+clinical_cluster$Stage[clinical_cluster$Stage %in% c('3A')] = '3-4'
+clinical_cluster$Stage[clinical_cluster$Stage %in% c('','0')] = '3-4'
+clinical_cluster$Stage[clinical_cluster$Stage %in% c('3B','4A')] = '3-4'
+clinical_cluster$Stage = factor(clinical_cluster$Stage)
 
 #
 coxfit1 = coxph(Surv(pfs,status) ~ k2, data = clinical_cluster, x = TRUE)
@@ -231,40 +286,35 @@ pfits = list()
 palette = c(brewer.pal(9,'Set1'),brewer.pal(5,'Set3'))
 
 #
-fit = survfit(Surv(pfs, status) ~ k2, data = clinical_cluster)
-pfits[[1]] = ggsurvplot(fit,pval = T,conf.int = F,legend.title = "Clustering (k=2)",legend.labs = paste0('c',levels(clinical_cluster$k2)),xlab = c('Time (days)'),palette = palette[2:1] )$plot
+fit = survfit(Surv(pfs, status) ~ k2, data = clinical_cluster[clinical_cluster$pfs<10,])
+pfits[[1]] = ggsurvplot(fit,pval = T,conf.int = F,legend.title = "k = 2",legend.labs = c('cluster 2 (high survival)','cluster 1 (low survival)'),xlab = c('Time (years)'),palette = palette[2:1] )$plot+ geom_vline(xintercept = 5,linetype = 'dashed')
 
-fit = survfit(Surv(pfs, status) ~ k3, data = clinical_cluster)
-pfits[[2]] = ggsurvplot(fit,pval = T,conf.int = F,legend.title = "Clustering (k=3)",legend.labs = paste0('c',levels(clinical_cluster$k3)),xlab = c('Time (days)'),palette = palette[c(4:5,1)])$plot
+fit = survfit(Surv(pfs, status) ~ k3, data = clinical_cluster[clinical_cluster$pfs<10,])
+pfits[[2]] = ggsurvplot(fit,pval = T,conf.int = F,legend.title = "k = 3",legend.labs = c('cluster 1','cluster 2','cluster 3') ,xlab = c('Time (years)'),palette = palette[c(4:5,1)])$plot + geom_vline(xintercept = 5,linetype = 'dashed')
 
-fit = survfit(Surv(pfs, status) ~ k4, data = clinical_cluster)
-pfits[[3]] = ggsurvplot(fit,pval = T,conf.int = F,legend.title = "Clustering (k=4)",legend.labs = paste0('c',levels(clinical_cluster$k4)),xlab = c('Time (days)'),palette = palette[c(6:8,1)])$plot
+fit = survfit(Surv(pfs, status) ~ k4, data = clinical_cluster[clinical_cluster$pfs<10,])
+pfits[[3]] = ggsurvplot(fit,pval = T,conf.int = F,legend.title = "k = 4",legend.labs = c('cluster 2','cluster 1','cluster 4','cluster 3'),xlab = c('Time (years)'),palette = palette[c(6:8,1)])$plot+ geom_vline(xintercept = 5,linetype = 'dashed')
 
-fit = survfit(Surv(pfs, status) ~ patho_stage, data = clinical_cluster)
-pfits[[4]] = ggsurvplot(fit,pval = T,conf.int = F,legend.title = "Pathological staging",legend.labs = c("1A", "1B",'2A','2B','3-4'),xlab = c('Time (days)'),palette = palette[c(11:14,1)])$plot
+fit = survfit(Surv(pfs, status) ~ Stage, data = clinical_cluster[clinical_cluster$pfs<10,])
+pfits[[4]] = ggsurvplot(fit,pval = T,conf.int = F,legend.title = "Pathological staging",xlab = c('Time (years)'),palette = palette[c(11:14,1)])$plot + geom_vline(xintercept = 5,linetype = 'dashed')#legend.labs = c("1A", "1B",'2A','2B','3-4')
 
 #fit = survfit(Surv(pfs, status) ~ random, data = clinical_cluster)
 #ggsurvplot(fit,pval = T,conf.int = T)$plot
 
-
-
 (pfits[[4]] + pfits[[1]]) / (pfits[[2]] + pfits[[3]]) #
-
-#
-
 ```
 
 ```{r hazard ratios}
 #
 hazard_summarised = NULL
-factors = c('patho_grade','patho_feature','patho_stage','packyr','Smoking_status','age','sex',
-            'Bianchi2007','Kratz2012','Der2014','Wilkerson2012','Wistuba2013','Shukla2016','Raz2008','Peinado2022','k3')
+factors = c('Tumor volume\n(cm3)','Grade','Predominant\nfeature','Stage','Pack year','Smoking\nstatus','Age','Sex',
+            'Bianchi2007','Kratz2012','Der2014','Wilkerson2012','Wistuba2013','Shukla2016','Raz2008','Peinado2022','Lamaze2024','Biswas2019',paste('k',k,sep = ''))
 
 
 #loop
 for(i in 1:length(factors)){
  
-  dataset = clinical_cluster[,colnames(clinical_cluster) %in% c('pfs','status', factors[i])]
+  dataset = clinical_cluster[clinical_cluster$pfs<10,colnames(clinical_cluster) %in% c('pfs','status', factors[i])]
   colnames(dataset)[colnames(dataset) == factors[i]] = 'zzz' 
   
   coxfit = coxph(Surv(pfs,status) ~ zzz, data = dataset, x = TRUE)
@@ -280,7 +330,7 @@ for(i in 1:length(factors)){
   coxfit_summary2$n = table(dataset$zzz)
   coxfit_summary2$names = factors[i]
   coxfit_summary2$catego = rownames(coxfit_summary2)
-  coxfit_summary2$catego = gsub(factors[i],'',coxfit_summary2$catego)
+  coxfit_summary2$catego = gsub(factors[i],'',coxfit_summary2$catego,fixed = T)
   coxfit_summary2 = coxfit_summary2[nrow(coxfit_summary2):1,]
   
   if(i == 1 ) hazard_summarised = coxfit_summary2
@@ -299,28 +349,37 @@ hazard_summarised$catego[hazard_summarised$catego==1] = 'cluster 1'
 hazard_summarised$catego[hazard_summarised$catego==2] = 'cluster 2'
 hazard_summarised$catego[hazard_summarised$catego==3] = 'cluster 3'
 
-hazard_summarised$names[hazard_summarised$names=='k3'] = 'gene expr\n(k = 3)' 
-hazard_summarised$names[hazard_summarised$names=='Bianchi2007'] = 'gene expr\n(Bianchi 2007)' 
-hazard_summarised$names[hazard_summarised$names=='Der2014'] = 'gene expr\n(Der 2014)' 
-hazard_summarised$names[hazard_summarised$names=='Kratz2012'] = 'gene expr\n(Kratz 2012)'
-
-hazard_summarised$names[hazard_summarised$names=='Wilkerson2012'] = 'gene expr\n(Wilkerson 2012)'
-hazard_summarised$names[hazard_summarised$names=='Wistuba2013'] = 'gene expr\n(Wistuba 2013)'
-hazard_summarised$names[hazard_summarised$names=='Shukla2016'] = 'gene expr\n(Shukla 2016)'
-hazard_summarised$names[hazard_summarised$names=='Raz2008'] = 'gene expr\n(Raz 2008)'
-hazard_summarised$names[hazard_summarised$names=='Peinado2022'] = 'gene expr\n(Peinado 2022)'
+hazard_summarised$names[hazard_summarised$names=='k2'|hazard_summarised$names=='k3'] = 'top25% variable' 
+hazard_summarised$names[hazard_summarised$names=='Bianchi2007'] = 'Bianchi 2007' 
+hazard_summarised$names[hazard_summarised$names=='Der2014'] = 'Der 2014' 
+hazard_summarised$names[hazard_summarised$names=='Kratz2012'] = 'Kratz 2012'
+hazard_summarised$names[hazard_summarised$names=='Wilkerson2012'] = 'Wilkerson 2012'
+hazard_summarised$names[hazard_summarised$names=='Wistuba2013'] = 'Wistuba 2013'
+hazard_summarised$names[hazard_summarised$names=='Shukla2016'] = 'Shukla 2016'
+hazard_summarised$names[hazard_summarised$names=='Raz2008'] = 'Raz 2008'
+hazard_summarised$names[hazard_summarised$names=='Peinado2022'] = 'Peinado 2022'
+hazard_summarised$names[hazard_summarised$names=='Lamaze2024'] = 'Lamaze 2024'
+hazard_summarised$names[hazard_summarised$names=='Biswas2019'] = 'Biswas 2019'
 
 hazard_summarised$catego_fac = factor(hazard_summarised$catego,levels = hazard_summarised$catego)
 
 #k = 3 
-hazard_summarised$catego[c(1,4,7,10,13,16,19,22,25)+25] = gsub('cluster [1-9]','cluster high',hazard_summarised$catego[c(1,4,7,10,13,16,19,22,25)+25])
-hazard_summarised$catego[c(1,4,7,10,13,16,19,22,25)+26] = gsub('cluster [1-9]','cluster med',hazard_summarised$catego[c(1,4,7,10,13,16,19,22,25)+26])
-hazard_summarised$catego[c(1,4,7,10,13,16,19,22,25)+27] = gsub('cluster [1-9]','cluster reference',hazard_summarised$catego[c(1,4,7,10,13,16,19,22,25)+27])
+if(k ==3){
+hazard_summarised$catego[c(1,4,7,10,13,16,19,22,25,28)+25] = gsub('cluster [1-9]','cluster high',hazard_summarised$catego[c(1,4,7,10,13,16,19,22,25,28)+25])
+hazard_summarised$catego[c(1,4,7,10,13,16,19,22,25,28)+26] = gsub('cluster [1-9]','cluster med',hazard_summarised$catego[c(1,4,7,10,13,16,19,22,25,28)+26])
+hazard_summarised$catego[c(1,4,7,10,13,16,19,22,25,28)+27] = gsub('cluster [1-9]','cluster reference',hazard_summarised$catego[c(1,4,7,10,13,16,19,22,25,28)+27])
+}
 
 #k=2
-#hazard_summarised$catego[c(1,3,5,7,9,11,13,15,17)+25] = gsub('cluster [1-9]','cluster high',hazard_summarised$catego[c(1,3,5,7,9,11,13,15,17)+25])
-#hazard_summarised$catego[c(1,3,5,7,9,11,13,15,17)+26] = gsub('cluster [1-9]','cluster reference',hazard_summarised$catego[c(1,3,5,7,9,11,13,15,17)+26])
+if(k ==2){
+hazard_summarised$catego[c(1,3,5,7,9,11,13,15,17,19)+25] = gsub('cluster [1-9]','cluster high',hazard_summarised$catego[c(1,3,5,7,9,11,13,15,17,19)+25])
+hazard_summarised$catego[c(1,3,5,7,9,11,13,15,17,19)+26] = gsub('cluster [1-9]','cluster reference',hazard_summarised$catego[c(1,3,5,7,9,11,13,15,17,19)+26])
+}
 
+#hazard_summarised$catego[hazard_summarised$catego == 'cluster high'] = 'cluster high_top25% variable'
+#hazard_summarised$catego[hazard_summarised$catego == 'cluster med'] = 'cluster med_top25% variable'
+#hazard_summarised$catego[hazard_summarised$catego == 'cluster reference'] = 'cluster reference_top25% variable'
+  
 hazard_summarised$catego = factor(hazard_summarised$catego,levels = hazard_summarised$catego)
 
 hazard_summarised = hazard_summarised[nrow(hazard_summarised):1,]
@@ -331,48 +390,94 @@ hazard_summarised$pvalue = as.character(signif(hazard_summarised$pval,2))
 hazard_summarised$pvalue[hazard_summarised$pvalue ==1] = 'Reference'
 hazard_summarised$ntext = paste0('n = ', hazard_summarised$n)
 
-
 #
 #hazard_summarised$catego2 = as.character(hazard_summarised$catego)
 
 #
-hazard_summarised_clin_path = hazard_summarised[hazard_summarised$names %in% c('Smoking_status','patho_stage','sex','patho_grade','patho_feature','age','packyr'), ]
+gexpr_factors = c('top25% variable','Bianchi 2007','Der 2014','Kratz 2012','Wilkerson 2012','gWistuba 2013','Shukla 2016','Raz 2008','Peinado 2022','Biswas 2019')
+hazard_summarised_clin = hazard_summarised[hazard_summarised$names %in% c('Smoking\nstatus','Sex','Age','Pack year'), ]
+hazard_summarised_patho = hazard_summarised[hazard_summarised$names %in% c('Tumor volume\n(cm3)','Stage','Grade','Predominant\nfeature'), ]
+hazard_summarised_gexpr = hazard_summarised[hazard_summarised$names %in% gexpr_factors,]
 
-hazard_summarised_gexpr = hazard_summarised[hazard_summarised$names %in% c('gene expr\n(k = 3)','gene expr\n(Bianchi 2007)','gene expr\n(Der 2014)','gene expr\n(Kratz 2012)','gene expr\n(Wilkerson 2012)','gene expr\n(Wistuba 2013)','gene expr\n(Shukla 2016)','gene expr\n(Raz 2008)','gene expr\n(Peinado 2022)'),]
+#reorder HR for the plots (k==3)
+for(i in 1:10){
+  temp = hazard_summarised_gexpr[hazard_summarised_gexpr$names == gexpr_factors[i],colnames(hazard_summarised_gexpr) %in% c('HR','low','high','pval','n')] 
+  temp = temp[order(temp$HR),]
+  hazard_summarised_gexpr[hazard_summarised_gexpr$names == gexpr_factors[i],colnames(hazard_summarised_gexpr) %in% c('HR','low','high','pval','n')] = temp
+}
+
+
+#keep the names the same, but we add extra spaces so that they are 'different' for tick marks during plotting.
+if(k == 2) hazard_summarised_gexpr$catego_renamed = c('cluster 1','cluster 2')
+if(k == 3) hazard_summarised_gexpr$catego_renamed = c('cluster 1','cluster 2','cluster 3')
+
+for(i in 1:8){
+  if(k ==2) hazard_summarised_gexpr$catego_renamed[(i*2 +1):(i*2 +2)] = paste0(paste0(rep(' ',i),collapse = ''),hazard_summarised_gexpr$catego_renamed[(i*2 + 1):(i*2 + 2)])
+  if(k ==3) hazard_summarised_gexpr$catego_renamed[(i*3 +1):(i*3 +3)] = paste0(paste0(rep(' ',i),collapse = ''),hazard_summarised_gexpr$catego_renamed[(i*3 + 1):(i*3 + 3)])
+}
+
+hazard_summarised_gexpr$catego_renamed = factor(hazard_summarised_gexpr$catego_renamed,levels = hazard_summarised_gexpr$catego_renamed[nrow(hazard_summarised_gexpr):1])
 
 
 
 #rectangle colors
-rects_clin_path = data.frame(ystart = c(0.5,4.5,9.5,14.5,16.5,20.5,23.5), yend = c(4.5,9.5,14.5,16.5,20.5,23.5,25.5), 
-         col = c('a','b','a','b','a','b','a'))
+rects_clin = data.frame(ystart = c(0.5,4.5,7.5,11.5), yend = c(4.5,7.5,11.5,13.5), 
+         col = c('a','b','a','b'))
+
+rects_path = data.frame(ystart = c(0.5,4.5,7.5,10.5), yend = c(4.5,7.5,10.5,15.5), 
+         col = c('a','b','a','b'))
 
 rects_Gxpr3 =  data.frame(ystart = c(0.5,3.5,6.5,9.5,12.5,15.5,18.5,21.5,24.5), yend =  c(3.5,6.5,9.5,12.5,15.5,18.5,21.5,24.5,27.5), 
          col = c('a','b','a','b','a','b','a','b','a'))
 
 rects_Gxpr2 =  data.frame(ystart = c(0.5,2.5,4.5,6.5,8.5,10.5,12.5,14.5,16.5), yend =  c(2.5,4.5,6.5,8.5,10.5,12.5,14.5,16.5,18.5), 
          col = c('a','b','a','b','a','b','a','b','a'))
+
+rects_Gxpr = list(1,rects_Gxpr2,rects_Gxpr3)
+
 #plot
-predictor_clinico_patho = 
-  ggplot(hazard_summarised_clin_path,aes(x = HR,y = catego_fac, col = names)) + 
-  geom_rect(data=rects_clin_path, aes(xmin=-2, xmax=11, ymin=ystart,ymax=yend, fill=col), alpha =0.5,inherit.aes = F,show.legend = F) +
+predictor_clinico = 
+  ggplot(hazard_summarised_clin,aes(x = HR,y = catego_fac, col = names)) + 
+  geom_rect(data=rects_clin, aes(xmin=-1.4, xmax=5, ymin=ystart,ymax=yend, fill=col), alpha =0.5,inherit.aes = F,show.legend = F) +
   geom_errorbarh(aes(xmin= low, xmax= high),position = position_dodge(.6),show.legend = F) +
   geom_vline(xintercept=1,linetype="dashed") + 
   geom_point(shape = 15, size = 3) +
-  geom_label(aes(x=10.9,label = pvalue),size = 3,show.legend = F,hjust = "inward") +
-  geom_label(aes(x=-1.9,label = ntext),size = 3, show.legend = F,hjust = "inward") +
-  xlim(-2,11) + 
+  geom_label(aes(x=4.9,label = pvalue),size = 3,show.legend = F,hjust = "inward") +
+  geom_label(aes(x=-1.3,label = ntext),size = 3, show.legend = F,hjust = "inward") +
+  xlim(-1.4,5) + 
   ylab('Predictor') +
   xlab('Hazard Ratio') +
   scale_fill_discrete(type = c('gray','white')) +
-  scale_color_discrete('Clustering factor',type  = brewer.pal(9,'Set1')[c(1:5,7:8)]) +
+  scale_color_discrete('Clustering factor',type  = brewer.pal(9,'Set1')[c(1:4)]) +
   theme_bw() + 
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
-  ggtitle('Prognostic value of clinical factors (PFS)')
+  ggtitle('Prognostic value of clinical variables')
 
-#
-predictor_gexpr_3 = 
-  ggplot(hazard_summarised_gexpr,aes(x = HR,y = catego, col = names)) + 
-  geom_rect(data=rects_Gxpr3, aes(xmin=0, xmax=3.5, ymin=ystart,ymax=yend, fill=col), alpha =0.5,inherit.aes = F,show.legend = F) +
+
+#plot
+predictor_patho = 
+  ggplot(hazard_summarised_patho,aes(x = HR,y = catego_fac, col = names)) + 
+  geom_rect(data=rects_path, aes(xmin=-1.6, xmax=10, ymin=ystart,ymax=yend, fill=col), alpha =0.5,inherit.aes = F,show.legend = F) +
+  geom_errorbarh(aes(xmin= low, xmax= high),position = position_dodge(.6),show.legend = F) +
+  geom_vline(xintercept=1,linetype="dashed") + 
+  geom_point(shape = 15, size = 3) +
+  geom_label(aes(x=9.9,label = pvalue),size = 3,show.legend = F,hjust = "inward") +
+  geom_label(aes(x=-1.6,label = ntext),size = 3, show.legend = F,hjust = "inward") +
+  xlim(-1.6,10) + 
+  ylab('Predictor') +
+  xlab('Hazard Ratio') +
+  scale_fill_discrete(type = c('gray','white')) +
+  scale_color_discrete('',type  = brewer.pal(9,'Set1')[c(5,7:9)]) +
+#  scale_x_continuous(expand = c(0.01,0.01))
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(),axis.title.y = element_blank(),panel.grid.minor = element_blank()) + 
+  ggtitle('Prognostic value of pathological variables')
+
+
+#plot
+predictor_gexpr = 
+  ggplot(hazard_summarised_gexpr,aes(x = HR,y = catego_renamed, col = names)) + 
+  geom_rect(data=rects_Gxpr[[k]], aes(xmin=0, xmax=3.5, ymin=ystart,ymax=yend, fill=col), alpha =0.5,inherit.aes = F,show.legend = F) +
   geom_errorbarh(aes(xmin= low, xmax= high),position = position_dodge(.6),show.legend = F) +
   geom_vline(xintercept=1,linetype="dashed") + 
   geom_point(shape = 15, size = 3) +
@@ -382,36 +487,32 @@ predictor_gexpr_3 =
   ylab('Predictor') +
   xlab('Hazard Ratio') +
   scale_fill_discrete(type = c('gray','white')) +
-  scale_color_discrete('Clustering factor',type  = brewer.pal(9,'Set1')[c(1:5,6,7:9)]) +
+  scale_color_discrete('Gene signature',type  = brewer.pal(9,'Set1')[c(1:5,7:9)]) +
   theme_bw() + 
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
-  ggtitle('Prognostic value of gene expression clusters\nbased on different signatures(PFS)')
+  ggtitle('Prognostic value of gene expression clusters')
 
 
 #
-pdf(file.path(params$outputpath,paste0('Figure3_predictor_clinico_patho.pdf')),width = 8,height = 6)
-predictor_clinico_patho
+pdf(file.path(params$outputpath,paste0('Figure1_predictor_clinico_patho10Y.pdf')),width = 10,height = 5)
+predictor_clinico + predictor_patho + plot_layout(guides = 'collect') + plot_annotation(tag_levels = 'A') 
 dev.off()
 
 #
-pdf(file.path(params$outputpath,paste0('Figure5_predictor_clinico_gexpr_3.pdf')),width = 8,height = 6)
-predictor_gexpr_3
-dev.off()
-
-
+#pdf(file.path(params$outputpath,ifelse(k==2,paste0('Figure5_predictor_clinico_gexpr_2_10Y.pdf'),paste0('FigureS2_predictor_clinico_gexpr_3_10Y.pdf'))),width = 7,height = 6) #predictor_gexpr
+#dev.off()
 ```
 
 
 ```{r upset_plot, message= T}
-
-clinical_cluster_upset = clinical_cluster[,colnames(clinical_cluster) %in% c('k2','k3','k4','patho_stage')]
+clinical_cluster_upset = clinical_cluster[,colnames(clinical_cluster) %in% c('k2','k3','k4','Stage')]
 rownames(clinical_cluster_upset) = rownames(clinical_cluster)
 
-clinical_cluster_upset$`cluster low (k = 2)` = ifelse(clinical_cluster_upset$k2 ==tail(levels(clinical_cluster$k2),1),1,0)
-clinical_cluster_upset$`cluster low (k = 3)` = ifelse(clinical_cluster_upset$k3 ==tail(levels(clinical_cluster$k3),1),1,0)
-clinical_cluster_upset$`cluster low (k = 4)` = ifelse(clinical_cluster_upset$k4 ==tail(levels(clinical_cluster$k4),1),1,0)
+clinical_cluster_upset$`k = 2 (cluster 1)` = ifelse(clinical_cluster_upset$k2 ==tail(levels(clinical_cluster$k2),1),1,0)
+clinical_cluster_upset$`k = 3 (cluster 3)` = ifelse(clinical_cluster_upset$k3 ==tail(levels(clinical_cluster$k3),1),1,0)
+clinical_cluster_upset$`k = 4 (cluster 3)` = ifelse(clinical_cluster_upset$k4 ==tail(levels(clinical_cluster$k4),1),1,0)
 
-clinical_cluster_upset$`patho stage 3-4` = ifelse(clinical_cluster_upset$patho_stage == 'stage 3-4',1,0)
+clinical_cluster_upset$`patho stage 3-4` = ifelse(clinical_cluster_upset$Stage == 'stage 3-4',1,0)
 
 upset_plot = upset(clinical_cluster_upset,colnames(clinical_cluster_upset)[5:7],
                    min_size = 0,
@@ -422,7 +523,7 @@ upset_plot = upset(clinical_cluster_upset,colnames(clinical_cluster_upset)[5:7],
                    themes=upset_modify_themes(
         list(
             'intersections_matrix'=theme(text=element_text(size=12)),
-            'Intersection size'= list(ylab('Number of patients'),ggtitle('Patients overlap in poor prognostic clusters (k = 2, k = 3, k = 4)'))
+            'Intersection size'= list(ylab('Number of patients'),ggtitle('Patients overlap in low survival clusters'))
         )
     ))
 ```
@@ -435,10 +536,10 @@ library(VennDiagram)
 k2_clusterlow <- rownames(clinical_cluster)[clinical_cluster$k2==tail(levels(clinical_cluster$k2),1)]
 k3_clusterlow <- rownames(clinical_cluster)[clinical_cluster$k3==tail(levels(clinical_cluster$k3),1)]
 k4_clusterlow <- rownames(clinical_cluster)[clinical_cluster$k4==tail(levels(clinical_cluster$k4),1)]
-stage34 <- rownames(clinical_cluster)[clinical_cluster$patho_stage=='stage 3-4']
+stage34 <- rownames(clinical_cluster)[clinical_cluster$Stage=='stage 3-4']
 
 x = list(k2_clusterlow,k3_clusterlow,k4_clusterlow)
-names(x) = c('k = 2 (cluster low) ','k = 3 (cluster low)','k = 4 (cluster low)')
+names(x) = c('k = 2 (cluster 1)','k = 3 (cluster 3)','k = 4 (cluster 3)')
 
 
 # Chart
@@ -453,65 +554,104 @@ venn_plot = ggvenn::ggvenn(
 
 
 ```{r barplots}
-clinical_cluster$survival = 'good'
+clinical_cluster$survival = 'high'
 clinical_cluster$survival [(clinical_cluster$k2 == tail(levels(clinical_cluster$k2),1)) &
                               (clinical_cluster$k3 == tail(levels(clinical_cluster$k3),1))
-                               & (clinical_cluster$k4 == tail(levels(clinical_cluster$k4),1))] = 'poor'
+                               & (clinical_cluster$k4 == tail(levels(clinical_cluster$k4),1))] = 'low'
+
+clinical_cluster$survival = factor(clinical_cluster$survival,levels = c('low','high'))
 
 patho = clinical_cluster %>% 
-  group_by(survival, patho_stage) %>% 
-  summarise(len =length(patho_stage)) %>% 
-  ggplot(aes(fill = patho_stage, x = len, y = survival)) + 
+  group_by(survival, Stage) %>% 
+  summarise(len =length(Stage)) %>% 
+  ggplot(aes(fill = Stage, x = len, y = survival)) + 
   geom_bar(position='fill', stat="identity") + 
-  ylab('Prognostic group') +
+  ylab('Survival group') +
   xlab('Proportions') +
-  ggtitle('Poor (103 patients) vs.\ngood (412 patients) groups') +
-  theme_bw()
+# ggtitle('Poor (103 patients) vs.\ngood (412 patients) groups') +
+  theme_bw() +
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1))
 
 sex = clinical_cluster %>% 
-  group_by(survival, sex) %>% 
-  summarise(len =length(sex)) %>% 
-  ggplot(aes(fill = sex, x = len, y = survival)) + 
+  group_by(survival, Sex) %>% 
+  summarise(len =length(Sex)) %>% 
+  ggplot(aes(fill = Sex, x = len, y = survival)) + 
   geom_bar(position='fill', stat="identity" ) + 
-  ylab('Prognostic group') +
+  ylab('Survival group') +
   xlab('Proportions') +
-  ggtitle('Sex') +
-  theme_bw()
+#  ggtitle('Sex') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 smoke = clinical_cluster %>% 
-  group_by(survival, Smoking_status) %>% 
-  summarise(len =length(Smoking_status)) %>% 
-  ggplot(aes(fill = Smoking_status, x = len, y = survival)) + 
+  group_by(survival, `Smoking\nstatus`) %>% 
+  summarise(len =length(`Smoking\nstatus`)) %>% 
+  ggplot(aes(fill = `Smoking\nstatus`, x = len, y = survival)) + 
   geom_bar(position='fill', stat="identity") +
-  ylab('Prognostic group') +
+  ylab('Survival group') +
   xlab('Proportions') +
-  ggtitle('Smoking') +
-  theme_bw()
+ # ggtitle('Smoking') +
+  theme_bw() +
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1))
 
-
-clinical_cluster$patho_grade = gsub('differentiated','diff.',clinical_cluster$patho_grade)
-clinical_cluster$patho_grade = gsub('moderately','mod.',clinical_cluster$patho_grade)
 
 grade = clinical_cluster %>% 
-  group_by(survival, patho_grade) %>% 
-  summarise(len =length(patho_grade)) %>% 
-  ggplot(aes(fill = patho_grade, x = len, y = survival)) + 
+  filter(Grade != 'unknown') %>%
+  group_by(survival, Grade) %>% 
+  summarise(len =length(Grade)) %>% 
+  ggplot(aes(fill = Grade, x = len, y = survival)) + 
   geom_bar(position='fill', stat="identity") +
-  ylab('Prognostic group') +
+  ylab('Survival group') +
   xlab('Proportions') +
-  ggtitle('Grade') +
-  theme_bw()
+#  ggtitle('Grade') +
+  theme_bw() +
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1))
 
 
 feature = clinical_cluster %>% 
-  group_by(survival, patho_feature) %>% 
-  summarise(len =length(patho_feature)) %>% 
-  ggplot(aes(fill = patho_feature, x = len, y = survival)) + 
+  filter(`Predominant\nfeature` != 'unknown') %>%
+  group_by(survival, `Predominant\nfeature`) %>% 
+  summarise(len =length(`Predominant\nfeature`)) %>% 
+  ggplot(aes(fill = `Predominant\nfeature`, x = len, y = survival)) + 
   geom_bar(position='fill', stat="identity") +
-  ylab('Prognostic group') +
+  ylab('Survival group') +
   xlab('Proportions') +
-  ggtitle('Feature') +
-  theme_bw()
+#  ggtitle('Predominant pattern') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+perctumor = clinical_cluster %>% 
+  group_by(survival, `Percentage\nof Tumor`) %>% 
+  summarise(len =length(`Percentage\nof Tumor`)) %>% 
+  ggplot(aes(fill = `Percentage\nof Tumor`, x = len, y = survival)) + 
+  geom_bar(position='fill', stat="identity") +
+  ylab('Survival group') +
+  xlab('Proportions') +
+ # ggtitle('Percentage tumor') +
+  theme_bw() +
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+tumorvol = clinical_cluster %>% 
+  group_by(survival, `Tumor volume\n(cm3)`) %>% 
+  summarise(len =length(`Tumor volume\n(cm3)`)) %>% 
+  ggplot(aes(fill = `Tumor volume\n(cm3)`, x = len, y = survival)) + 
+  geom_bar(position='fill', stat="identity") +
+  ylab('Survival group') +
+  xlab('Proportions') +
+ # ggtitle('Percentage tumor') +
+  theme_bw() +
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1))
 
 #pdf(file.path(params$outputpath,paste0('Figure4_prognostic.pdf')),width = 14,height = 9)
 #((venn_plot | patho | sex) + plot_layout(width = c(5,3.5,3.5))) / (smoke | grade | feature) #
@@ -521,36 +661,39 @@ feature = clinical_cluster %>%
 
 
 
-pdf(file.path(params$outputpath,paste0('Figure2_prognostic.pdf')),width = 14,height = 10)
+pdf(file.path(params$outputpath,paste0('Figure4_prognostic2.pdf')),width = 14,height = 9)
 
-((pfits[[4]] / pfits[[1]] / pfits[[2]] / pfits[[3]]) + plot_layout(height = c(2.5,2.5,2.5,2.5)) | (
-  ((upset_plot | venn_plot) + plot_layout(width = c(4,3)) ) / ((patho | smoke) / (grade | feature)))) + plot_layout(width = c(4,5))  + plot_annotation(tag_levels = list(c('A','B','C','D','E','','F','G','H','I','J')))
+(( pfits[[1]] / pfits[[2]] / pfits[[3]]) + plot_layout(height = c(3,3,3)) | (
+  ((upset_plot | venn_plot) + plot_layout(width = c(4,3)) ) / ((sex | smoke | patho) / (feature | grade | tumorvol)))) + plot_layout(width = c(4,5))  + plot_annotation(tag_levels = list(c('A','B','C','D','E','','F','G','H','I','J','K')))
 
 dev.off()
-
-
 ```
 
 
 
-```{r degs, message= T}
+```{r degs, message= T, eval = F}
 #small POC
-cli_s = data.frame(Record.ID = as.character(clinical_cluster$`Record ID`),
-                   survival = clinical_cluster$survival)
+clinical_cluster$survival
 
-cli_s = clinical[order(clinical$Record.ID),]
+#
+txi = readRDS(file.path(params$repo,'../rnaseq/lord_kallisto/txi.rds'))
+clinical_bigtable = read.csv(file.path(params$repo,'../rnaseq/data/clinical_bigtable_v3.csv'), check.names = F)
 
-txi_s = txi
+#tumors only
+txi$counts = txi$counts[,grep('Tumeur',colnames(txi$counts))]
+txi$abundance = txi$abundance[,grep('Tumeur',colnames(txi$abundance))]
+txi$length =txi$length[,grep('Tumeur',colnames(txi$length))]
 
-txi_s$counts = txi_s$counts[,grep('Tumeur',colnames(txi_s$counts))]
-txi_s$length = txi_s$length[,grep('Tumeur',colnames(txi_s$length))]
-
-txi_s$counts = txi_s$counts[,order(sapply(strsplit(colnames(txi_s$counts), "_",fixed = T), "[",6))]
-txi_s$length = txi_s$length[,order(sapply(strsplit(colnames(txi_s$length), "_",fixed = T), "[",6))]
+#order things
+order = order(sapply(strsplit(colnames(txi$counts), "_"), "[",5))
+txi$counts = txi$counts[,order]
+txi$abundance = txi$abundance[,order]
+txi$length = txi$length[,order]
+all.equal(as.character(clinical_cluster$`Record ID`),sapply(strsplit(colnames(txi$counts), "_"), "[",5))
 
 
 #deseq object
-dds = DESeqDataSetFromTximport(txi_s,colData = cli_s, ~ survival)
+dds = DESeqDataSetFromTximport(txi,colData = clinical_cluster, ~ survival)
 #dds = DESeqDataSetFromTximport(txi,colData = clinical_bigtable_normal_tumor, ~ predominant_feature*tissue)
      dds = DESeq(dds)
      resultsNames(dds)
@@ -564,7 +707,6 @@ dds = DESeqDataSetFromTximport(txi_s,colData = cli_s, ~ survival)
      #head(res)
      res_signif = res[res$padj<0.05,]
      dim(res_signif)
-     
      
      
 #GO 
@@ -599,7 +741,7 @@ names(gene_list) = sapply(strsplit(rownames(res), ".",fixed = T), "[",1)
 
 
 # save it
-```{r session, message= T}
+```{r session, message= T,eval = F}
 #save it 
 pdf(file.path(params$outputpath,paste0('Figure3_survival.pdf')),width = 12,height = 8)
 pfits[[4]] + pfits[[1]] + pfits[[2]] + pfits[[3]] + plot_annotation(tag_levels = 'A')

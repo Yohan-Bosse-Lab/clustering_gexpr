@@ -7,7 +7,7 @@ output:
     number_sections: F
 params:
   datapath: 'C:/Users/renseb01/Documents/clustering_gexpr/data'
-  outputpath: 'C:/Users/renseb01/Documents/clustering_gexpr/results/Nov2024'
+  outputpath: 'C:/Users/renseb01/Documents/clustering_gexpr/results/April2025'
   repo: 'C:/Users/renseb01/Documents/clustering'
    
 ---
@@ -30,8 +30,8 @@ library(factoextra)
 library(FactoMineR)
 ```
 
-```{r data}
-clinical_bigtable = read.csv(file.path(params$repo,'../rnaseq/data/clinical_bigtable_v2.csv'), check.names = F)
+```{r data,eval = T}
+clinical_bigtable = read.csv(file.path(params$repo,'../rnaseq/data/clinical_bigtable_v3.csv'), check.names = F)
 
  #3. get bulkRNAseq data
   txi = readRDS(file.path(params$repo,'../rnaseq/lord_kallisto/txi.rds'))
@@ -42,10 +42,11 @@ clinical_bigtable = read.csv(file.path(params$repo,'../rnaseq/data/clinical_bigt
   colnames(bulk) = sapply(strsplit(colnames(bulk), ".",fixed = T), "[",5)
 
   bulk_vst = vst(bulk)
+
 ```
 
 
-```{r choose specific genes}
+```{r choose specific genes, eval = F}
 #keep some candidate from some study (Wilkerson MD, et al. Differential pathogenesis of lung adenocarcinoma subtypes involving sequence mutations, copy number, chromosomal instability, and methylation. PLoS ONE. 2012;7:e36530. doi: 10.1371/journal.pone.0036530.)
 marker_genes = c('SFTPC','DMBT1','FOLR1','DUSP4','FGL1','TDG','PLAU','G0S2','CXCL10')
 
@@ -63,17 +64,22 @@ bulk_vst_variable_tumeur = bulk_vst_variable_tumeur[,colnames(bulk_vst_variable_
 
 
 
-```{r choose specific cutoff}
+```{r choose specific cutoff,eval = T}
 #keep top 10% most variable genes as a reference for the deconvolution
 variance_genes = apply(bulk_vst[,grep('Tumeur',colnames(bulk_vst))], 1,var)
 cutoff = quantile(variance_genes,seq(0,1,by = 0.005))
 bulk_vst_variable = bulk_vst[variance_genes > cutoff[151], ]
 bulk_vst_variable_tumeur = t(bulk_vst_variable[,grep('Tumeur',colnames(bulk_vst_variable))])
 dim(bulk_vst_variable_tumeur)
+rownames(bulk_vst_variable_tumeur) = sapply(strsplit(rownames(bulk_vst_variable_tumeur), "_",fixed = T), "[",3)
+
+#keep only tumors with a >35% tumoral tissue.
+bulk_vst_variable_tumeur = bulk_vst_variable_tumeur[order(rownames(bulk_vst_variable_tumeur)),]
+#bulk_vst_variable_tumeur = bulk_vst_variable_tumeur[clinical_cluster$`Pathology_Tumor_Percentage of Tumor` >35,]
 
 sildata = NULL
 wssdata = NULL
-
+winner = NULL
 #x$data
 #sildata$rep = as.character(0)
 #wssdata$rep = as.character(0) 
@@ -93,28 +99,29 @@ for(i in 1:1000){
   
   sildata = rbind(sildata,temp$data)
   wssdata = rbind(wssdata,tempW$data)
+  winner = c(winner,temp$data$clusters[temp$data$y == max(temp$data$y)])
   
   if(i %% 100 == 0) print(paste0('Time is: ', Sys.time(), ', i = ', i))
 }
 
-
-
+#
 sil_nbclust = ggplot(sildata,aes(x =clusters,y = y)) + 
-  geom_point(aes(group = rep),col = 'red',show.legend = F) + 
-  geom_line(aes(group = rep),alpha = 0.025,show.legend = F) + 
+  geom_point(aes(group = rep),col = 'black',show.legend = F) + 
+  geom_line(aes(group = rep),alpha = 0.025,show.legend = F,col = 'red') + 
   geom_boxplot(outliers =F) +
-  ylab('Average Silhouette width') +
-  xlab('Number of clusters k') + 
-  ggtitle('optimal Number of clusters') +
+  ylab('Average Silhouette Score') +
+  xlab('Number of Clusters k') + 
+  #ggtitle('optimal Number of clusters') +
   theme_bw()
 
-wss_nbclust = ggplot(wssdata,aes(x =clusters,y = y)) + 
-  geom_point(aes(group = rep),col = 'red',show.legend = F) + 
-  geom_line(aes(group = rep),alpha = 0.025,show.legend = F) + 
+#
+wss_nbclust = ggplot(wssdata,aes(x =clusters,y = y/10000)) + 
+  geom_point(aes(group = rep),col = 'black',show.legend = F) + 
+  geom_line(aes(group = rep),alpha = 0.025,show.legend = F,col= 'red') + 
   geom_boxplot(outliers =F) +
-  ylab('Total withing Sum of Square') +
-  xlab('Number of clusters k') + 
-  ggtitle('optimal Number of clusters') +
+  ylab('Total Within Sum of Square (1e+04)') +
+  xlab('Number of Clusters k') + 
+  #ggtitle('optimal Number of clusters') +
   theme_bw()
 ```
 
@@ -122,20 +129,21 @@ wss_nbclust = ggplot(wssdata,aes(x =clusters,y = y)) +
 
 ```{r clustertable}
 #
-#p1=fviz_nbclust(bulk_vst_variable_tumeur, kmeans, method = "silhouette")
-#p2=fviz_nbclust(bulk_vst_variable_tumeur, hcut, method = "silhouette")
-#p3=fviz_nbclust(bulk_vst_variable_tumeur, kmeans, method = "wss")
-#p4=fviz_nbclust(bulk_vst_variable_tumeur, hcut, method = "wss")
-#p1+p2+p3+p4
-
-#
 bulk_vst_variable = bulk_vst[variance_genes > cutoff[191], ]
 bulk_vst_variable_tumeur = t(bulk_vst_variable[,grep('Tumeur',colnames(bulk_vst_variable))])
+rownames(bulk_vst_variable_tumeur) = sapply(strsplit(rownames(bulk_vst_variable_tumeur), "_",fixed = T), "[",3)
+
+#keep only tumors with a >35% tumoral tissue.
+bulk_vst_variable_tumeur = bulk_vst_variable_tumeur[order(rownames(bulk_vst_variable_tumeur)),]
+#bulk_vst_variable_tumeur = bulk_vst_variable_tumeur[clinical_cluster$`Pathology_Tumor_Percentage of Tumor` >35,]
+
+
+
 k2 = kmeans(bulk_vst_variable_tumeur,2,nstart = 100)
 k3 = kmeans(bulk_vst_variable_tumeur,3,nstart = 100)
 k4 = kmeans(bulk_vst_variable_tumeur,4,nstart = 100)
 k5 = kmeans(bulk_vst_variable_tumeur,5,nstart = 100)
-k6 = kmeans(bulk_vst_variable_tumeur,6,nstart = 100)
+#k6 = kmeans(bulk_vst_variable_tumeur,6,nstart = 100)
 
 #silhouette
 sil <- silhouette(k3$cluster, dist(bulk_vst_variable_tumeur))
@@ -161,41 +169,62 @@ sil_k = fviz_silhouette(sil)
 
 
 ```{r clustertable}
-cluster_table = data.frame(`Record ID` = sapply(strsplit(rownames(bulk_vst_variable_tumeur), "_",fixed = T), "[",3),
+cluster_table = data.frame(`Record ID` = rownames(bulk_vst_variable_tumeur),
                            ID = rownames(bulk_vst_variable_tumeur),
                            check.names = F,
-                           `kmeans (k=2)` = as.factor(k2$cluster),
-                           `kmeans (k=3)` =  as.factor(k3$cluster),
-                           `kmeans (k=4)` =  as.factor(k4$cluster),
-                           `kmeans (k=5)` =  as.factor(k5$cluster)
+                           `k = 2` = as.factor(k2$cluster),
+                           `k = 3` =  as.factor(k3$cluster),
+                           `k = 4` =  as.factor(k4$cluster),
+                           `k = 5` =  as.factor(k5$cluster)
                            )
 
-clin_sub = clinical_bigtable[,colnames(clinical_bigtable) %in% c('Record ID','Profil_visit_history_Smoking status','Pathology_Tumor_Stage pathologic','Profil_visit_history_Sex at birth','Pathology_Tumor_Grade','Pathology_Tumor_Predominant feature')]
+#percentage of tumor
+clinical_bigtable$`Pathology_Tumor_Percentage of Tumor`[is.na(clinical_bigtable$`Pathology_Tumor_Percentage of Tumor`)] = mean(clinical_bigtable$`Pathology_Tumor_Percentage of Tumor`,na.rm = T)
 
+#percentage of tumor.
+clinical_bigtable$`Percentage of Tumor` = '<35%'
+clinical_bigtable$`Percentage of Tumor`[(clinical_bigtable$`Pathology_Tumor_Percentage of Tumor` >= 35) & (clinical_bigtable$`Pathology_Tumor_Percentage of Tumor` < 55)] = '35-55%'
+clinical_bigtable$`Percentage of Tumor`[(clinical_bigtable$`Pathology_Tumor_Percentage of Tumor` >= 55) & (clinical_bigtable$`Pathology_Tumor_Percentage of Tumor` < 75)] = '55-75%'
+clinical_bigtable$`Percentage of Tumor`[clinical_bigtable$`Pathology_Tumor_Percentage of Tumor` > 75] = '>75%'
+clinical_bigtable$`Percentage of Tumor` = factor(clinical_bigtable$`Percentage of Tumor`,levels = unique(clinical_bigtable$`Percentage of Tumor`)[c(3,1,2,4)])
+
+
+#
+clinical_bigtable$Age[clinical_bigtable$`Profil_visit_history_Age at diagnosis`< 60] = '<60 years old'
+clinical_bigtable$Age[clinical_bigtable$`Profil_visit_history_Age at diagnosis`>= 60 & clinical_bigtable$`Profil_visit_history_Age at diagnosis` < 75] = '60-75'
+
+#
+clin_sub = clinical_bigtable[,colnames(clinical_bigtable) %in% c('Record ID','Profil_visit_history_Smoking status','Pathology_Tumor_Stage pathologic','Profil_visit_history_Sex at birth','Pathology_Tumor_Grade','Pathology_Tumor_Predominant feature','Percentage of Tumor')]
+
+#
 cluster_clinical_table = merge(cluster_table,clin_sub,by =  'Record ID')
 
 cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('1A','1A1','1A2','1A3')] = 'stage 1A'
 cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('1B')] = 'stage 1B'
 cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('2A')] = 'stage 2A'
 cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('2B')] = 'stage 2B'
-cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('3A')] = 'stage 3A'
-cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('','0')] = 'stage 0'
-cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('3B','4A')] = 'stage 3B-4A'
+cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('3A')] = 'stage 3-4'
+cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('','0')] = 'stage 3-4'
+cluster_clinical_table$`Pathology_Tumor_Stage pathologic`[cluster_clinical_table$`Pathology_Tumor_Stage pathologic` %in% c('3B','4A')] = 'stage 3-4'
+
+
 ```
 
 
 
 ```{r plots, message= T}
 #re-order
-cluster_clinical_table = cluster_clinical_table[order(cluster_clinical_table$`kmeans (k=2)`,
-                                                      cluster_clinical_table$`kmeans (k=3)`,
-                                                      cluster_clinical_table$`kmeans (k=4)`,
-                                                      cluster_clinical_table$`kmeans (k=5)`,
+cluster_clinical_table = cluster_clinical_table[order(cluster_clinical_table$`k = 2`,
+                                                      cluster_clinical_table$`k = 3`,
+                                                      cluster_clinical_table$`k = 4`,
+                                                      cluster_clinical_table$`k = 5`,
                                                       cluster_clinical_table$Pathology_Tumor_Grade,
                                                       cluster_clinical_table$`Pathology_Tumor_Predominant feature`,
                                                       cluster_clinical_table$`Pathology_Tumor_Stage pathologic`,
                                                       cluster_clinical_table$`Profil_visit_history_Sex at birth`,
-                                                      cluster_clinical_table$`Profil_visit_history_Smoking status`),]
+                                                      cluster_clinical_table$`Profil_visit_history_Smoking status`,
+                                                      cluster_clinical_table$`Percentage of Tumor`),]
+
 
 
 #factorise
@@ -217,7 +246,7 @@ cluster_clinical_table$`Profil_visit_history_Smoking status` = as.factor(cluster
 
 
 #pivot
-data_longer = cluster_clinical_table %>% pivot_longer(cols = c(3:11),names_to='method', values_to = 'clusterID')
+data_longer = cluster_clinical_table %>% pivot_longer(cols = c(3:12),names_to='method', values_to = 'clusterID')
 data_longer$heigth = 1
 
 #factorise for colors
@@ -246,16 +275,44 @@ clustering_plot = ggplot(data_longer,aes(fill=clusterID, y=heigth, x=`Record ID`
 
 
 
+```{r PCAaccording to tumor percentage,eval = F}
+#clinical_cluster = merge(cluster_table,clinical_bigtable,by = 'Record ID')
+pca_data = PCA(bulk_vst_variable_tumeur,scale = F, graph = F,ncp = 50)
+
+pca_dataplot = data.frame(dim1 = pca_data$ind$coord[,1],
+                          dim2 = pca_data$ind$coord[,2],
+                          `Record ID` = sapply(strsplit(rownames(pca_data$ind$coord), "_",fixed = T), "[",3),check.names = F)
+
+pca_dataplot = merge(pca_dataplot,clinical_bigtable[,colnames(clinical_bigtable) %in% c('Record ID','Percentage of Tumor','Pathology_Tumor_Percentage of Tumor')])
+
+
+ggplot(pca_dataplot) + geom_point(aes(x = dim1,y = dim2,col = `Pathology_Tumor_Percentage of Tumor`),size = 4) + theme_bw()
+
+
+fviz_pca_biplot(pca_data,
+                select.var= list(contrib = 2),
+                col.ind = clinical_bigtable$`Percentage of Tumor`, # color by groups
+                col.var='black',
+                geom = 'point',
+                addEllipses = F, # Concentration ellipses
+                ellipse.level=0.95,
+                legend.title = "Method",
+                repel = F)
+```
+
+
+
+
+
 ```{r PCA}
 ###
-pca_k2_plot <- fviz_cluster(k2, geom = "point",  data = bulk_vst_variable_tumeur) + ggtitle("k = 2") + theme_bw()
-pca_k3_plot <- fviz_cluster(k3, geom = "point",  data = bulk_vst_variable_tumeur) + ggtitle("k = 3") + theme_bw()
-pca_k4_plot <- fviz_cluster(k4, geom = "point",  data = bulk_vst_variable_tumeur) + ggtitle("k = 4") + theme_bw()
-pca_k5_plot <- fviz_cluster(k5, geom = "point",  data = bulk_vst_variable_tumeur) + ggtitle("k = 5") + theme_bw()
-pca_k2_plot + pca_k3_plot + pca_k4_plot + pca_k5_plot
+pca_k2_plot <- fviz_cluster(k2, geom = "point",  data = bulk_vst_variable_tumeur,palette='Set1') + ggtitle("k = 2") + theme_bw()
+pca_k3_plot <- fviz_cluster(k3, geom = "point",  data = bulk_vst_variable_tumeur,palette='Set1') + ggtitle("k = 3") + theme_bw()
+pca_k4_plot <- fviz_cluster(k4, geom = "point",  data = bulk_vst_variable_tumeur,palette='Set1') + ggtitle("k = 4") + theme_bw()
+#pca_k5_plot <- fviz_cluster(k5, geom = "point",  data = bulk_vst_variable_tumeur,palette='Set1') + ggtitle("k = 5") + theme_bw()
+pca_k2_plot + pca_k3_plot + pca_k4_plot# + pca_k5_plot
 
 ###
-pca_data = PCA(bulk_vst_variable_tumeur, scale = F, graph = F, ncp = 20)
 data.umap = umap::umap(pca_data$ind$coord)
 
 ###
@@ -275,94 +332,35 @@ pk4 = df %>% ggplot(aes(x = x, y = y, col = `clusters (k = 4)`)) + geom_point(si
 pk2 + pk3 + pk4
 ```
 
-```{r PCA categorical data hot encoding by hand}
-#does not help. does not add a better signal, stronger cluster predictive potential
-bulk_vst_variable_tumeur = t(bulk_vst[,grep('Tumeur',colnames(bulk_vst))])
-bulk_vst_variable_tumeur = bulk_vst_variable_tumeur[,colnames(bulk_vst_variable_tumeur) %in% conversion$ENSEMBL]
-bulk_vst_variable_tumeur = data.frame(bulk_vst_variable_tumeur,check.names = F)
-
-bulk_vst_variable_tumeur$`Record ID` = sapply(strsplit(rownames(bulk_vst_variable_tumeur), "_",fixed = T), "[",3)
-clinical_small = clinical_cluster[,colnames(clinical_cluster) %in% c('patho_stage','Record ID')]
-
-#one hot encoding
-clinical_small$patho_stage1A = 0;clinical_small$patho_stage1A[clinical_small$patho_stage== 'stage 1A'] = 1
-clinical_small$patho_stage1B = 0;clinical_small$patho_stage1B[clinical_small$patho_stage== 'stage 1B'] = 1
-clinical_small$patho_stage2A = 0;clinical_small$patho_stage2A[clinical_small$patho_stage== 'stage 2A'] = 1
-clinical_small$patho_stage2B = 0;clinical_small$patho_stage2B[clinical_small$patho_stage== 'stage 2B'] = 1
-clinical_small$patho_stage34 = 0;clinical_small$patho_stage34[clinical_small$patho_stage== 'stage 3-4'] = 1
-
-#merge
-merged = merge(bulk_vst_variable_tumeur,clinical_small,by = 'Record ID')
-
-#kmeans with/without patho
-k2 = kmeans(merged[,c(2:7,9:13)],4,nstart = 100)
-k2 = kmeans(merged[,c(2:7)],4,nstart = 100)
-k2_clustered = data.frame(k2_hot = as.factor(k2$cluster), `Record ID` = merged$`Record ID`, check.names = F)
-
-#merged back with with clinical
-clinical_cluster_remerged = merge(k2_clustered,clinical_bigtable,by = 'Record ID')
-clinical_cluster_remerged$os = clinical_cluster_remerged$`Follow-up_O.S. (2022)`
-clinical_cluster_remerged$status = ifelse(clinical_cluster_remerged$`Profil_visit_history_Vital status` == "Alive",0,1)
-clinical_cluster_remerged$pfs = clinical_cluster_remerged$`Follow-up_PFS (2022)`
-
-#cox model
-coxfit1 = coxph(Surv(pfs,status) ~ k2_hot, data = clinical_cluster_remerged, x = TRUE)
-gtsummary::tbl_regression(coxfit1, exponentiate = TRUE)
-```
-
-
-```{r visualise}
-bulk_vst_variable_tumeur.scaled = scale(bulk_vst_variable_tumeur)
-
-#kmeans
-k3 = kmeans(bulk_vst_variable_tumeur,3,nstart = 100)
-pca_k3 <- fviz_cluster(k3, geom = "point",  data = bulk_vst_variable_tumeur) + ggtitle("k = 3") + theme_bw()
-sil <- silhouette(k3$cluster, dist(bulk_vst_variable_tumeur))
-sil_k = fviz_silhouette(sil)
-
-# PAM clustering
-pam.res <- pam(bulk_vst_variable_tumeur, 5)
-pca_pam =fviz_cluster(pam.res, geom = "point", data = bulk_vst_variable_tumeur) + theme_minimal()
-sil_pam = fviz_silhouette(pam.res)
-
-# Hierarchical clustering
-hc.cut = hcut(bulk_vst_variable_tumeur, k = 3, hc_method = "complete")
-hc_hc = fviz_dend(hc.cut, show_labels = FALSE, rect = TRUE)
-# Visualize silhouette information
-sil_hc = fviz_silhouette(hc.cut)
-
-(hc_hc + sil_hc)
-
-(pca_k3 + sil_k) /
-(pca_pam + sil_pam) /
-(hc_hc + sil_hc)
-
-heatmap((bulk_vst_variable_tumeur.scaled),scale = 'none')
-```
-
-
 
 ```{r ari score}
 library(ggcorrplot)
-ari = matrix(0,nrow = 9,ncol =9)
+ari = matrix(0,nrow =10,ncol =10)
 
 
-colnames(ari) = gsub('Profil_visit_history_','',colnames(cluster_clinical_table)[3:11])
-colnames(ari) = gsub('Pathology_Tumor_','',colnames(ari))
-colnames(ari) = gsub('Predominant feature','Feature',colnames(ari))
-colnames(ari) = gsub('Stage pathologic','Stage (patho)',colnames(ari))
+colnames(ari) = gsub('Profil_visit_history_','',colnames(cluster_clinical_table)[3:12])
+colnames(ari) = gsub('Pathology_Tumor_Stage pathologic','Stage',colnames(ari))
+colnames(ari) = gsub('Pathology_Tumor_Predominant feature','Predom.\nfeature',colnames(ari))
+colnames(ari) = gsub('Pathology_Tumor_Grade','Grade',colnames(ari))
 colnames(ari) = gsub('Smoking status','Smoking',colnames(ari))
+colnames(ari) = gsub(' at birth','',colnames(ari))
+colnames(ari) = gsub('Percentage of Tumor','Tumor (%)',colnames(ari))
 rownames(ari) = colnames(ari)
 
 #
-for(i in 1:9)
+for(i in 1:10)
   {
-  for(j in 1:9)
+  for(j in 1:10)
     {
-    ari[i,j] = abs(aricode::ARI(cluster_clinical_table[,i+2],cluster_clinical_table[,j+2]))
+    temp = abs(aricode::ARI(cluster_clinical_table[,i+2],cluster_clinical_table[,j+2]))
 #    ari[i,j] = abs(aricode::ARI(both[,i],both[,j]))
+   # if(temp<0.01) ari[i,j] = '<0.01'
+      ari[i,j] = temp
     }
   }
+
+#remove k=5
+ari = ari[-4,-4]
 
 
 #plot
@@ -370,16 +368,16 @@ gcors = ggcorrplot(ari,
            title = 'Clustering similarity',
           show.diag = T,
           type = 'lower',
-          lab_size = 2,
-          tl.cex =6,
+          lab_size = 4,
+          tl.cex =12,
           lab = T) + 
           scale_fill_gradient2(name = 'adjusted\nRand Index',breaks = c(0,0.5, 1), limit = c(0, 1),low = 'blue',mid = 'white',high = 'red')
 ```
 
 
 ```{r save plots}
-pdf(file.path(params$outputpath,paste0('Figure1_clustering_metrics.pdf')),width = 16,height = 10)
-(sil_nbclust | wss_nbclust | gcors) / (pca_k2_plot | pca_k3_plot | pca_k4_plot) + plot_layout(heights = c(6,4)) + plot_annotation(tag_levels =  list(c('A','B','F','C','D','E')))
+pdf(file.path(params$outputpath,paste0('Figure2_clustering_metrics.pdf')),width = 16,height = 10)
+(sil_nbclust | wss_nbclust | gcors) / (pca_k2_plot | pca_k3_plot | pca_k4_plot) + plot_layout(heights = c(6,4)) + plot_annotation(tag_levels =  list(c('A','B','C','D','E','F')))
 dev.off()
 
 #save it 

@@ -1,0 +1,153 @@
+---
+title: "QC summary LORD"
+author: "Sébastien Renaut (sebastien.renaut@criucpq.ulaval.ca)"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    number_sections: F
+params:
+  datapath: 'C:/Users/renseb01/Documents/rnaseq'
+  outputpath: '../..' 
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = params$datapath)
+knitr::opts_chunk$set(echo = F)
+library(DT) #data viz
+library(ggplot2)
+library(patchwork)
+library(readxl)
+library(dplyr)
+library(RColorBrewer)
+library(vegan)
+```
+
+# Data
+* 736 samples analysed: 
+  * **Part1: 64 samples**
+  * **Part2: 416 samples**
+  * **Part3: 256 samples**
+  * **Part4: 288 samples**
+  * **Part5: 32 samples**
+* Alignments statistics based on a pseudo-random set of 200,000 sequences for each sample.
+  * Percentage aligned correspond to the fraction of reads alignment to a transcribed region of the genome.
+* **No samples are both below 70M reads AND below 70% aligned**.
+
+```{r data}
+part1  = read.delim(file.path(params$datapath,'lordQC/fastqc_statistics_part1.csv'),header = T,sep = ' ')
+part2  = read.delim(file.path(params$datapath,'lordQC/fastqc_statistics_part2.csv'),header = T,sep = ' ')
+part3  = read.delim(file.path(params$datapath,'lordQC/fastqc_statistics_part3.csv'),header = T,sep = ' ')
+part4  = read.delim(file.path(params$datapath,'lordQC/fastqc_statistics_part4.csv'),header = T,sep = ' ')
+part5  = read.delim(file.path(params$datapath,'lordQC/fastqc_statistics_part5.csv'),header = T,sep = ' ')
+
+part5$bio_sample= gsub('_v20231109','',part5$bio_sample)
+part5$sample= gsub('_v20231109','',part5$sample)
+
+#rbind
+part1 = data.frame(part1,part = 'part1')
+part2 = data.frame(part2,part = 'part2')
+part3 = data.frame(part3,part = 'part3')
+part4 = data.frame(part4,part = 'part4')
+part5 = data.frame(part5,part = 'part5')
+part = rbind(part1, part2, part3, part4,part5)
+
+
+#keep only one when there are doublets.
+txi_colnames = read.csv(file.path(params$datapath,'lord_kallisto/txi_colnames.csv'))
+txi_colnames$part = sapply(strsplit(txi_colnames$x, "/",fixed = T), "[",1)
+txi_colnames$part = sapply(strsplit(txi_colnames$part, "_",fixed = T), "[",2)
+txi_colnames$bio_sample = sapply(strsplit(txi_colnames$x, "_i5.",fixed = T), "[",2) 
+
+sequences = merge(x = txi_colnames,y = part, by = c('bio_sample','part'))
+
+#order and keep only one pair-end
+sequences = sequences[order(sequences$sample),]
+
+#clean up columns
+sequences = sequences[seq(1,nrow(sequences),by = 2),]
+sequences$sample =  gsub('_R1','',sequences$sample)
+```
+
+
+##
+```{r align}
+txi = readRDS(file.path(params$datapath,'lord_kallisto/txi.rds')) #batch 5 are mostly reruns
+
+log10_counts_pergene = data.frame(log10_counts_pergene = log10(rowMeans(txi$abundance)))
+
+colsums = colSums(txi$counts)/1000000
+colsums = colsums[order(names(colsums))]
+
+sequences$aligned_reads = colsums
+sequences$percentage_aligned = sequences$aligned_reads / sequences$tot.seq
+sequences = sequences[sequences$type == 'Tumor',]
+
+bs = 12
+
+sequences_ggplot = data.frame(sequences = c(sequences$tot.seq,sequences$aligned_reads), Sequencing = c(rep('raw',515),rep('aligned',515)))
+p1 = ggplot(sequences_ggplot, aes(x=sequences,fill = Sequencing)) +
+  geom_histogram(alpha = 0.7,bins =50,position = 'identity') + 
+  xlim(25,175) +
+  ylab('Count') +
+  xlab('Number of Sequences (Millions)') + 
+#  ggtitle('Sequencing output') +
+  scale_fill_manual(values = brewer.pal(n =4, name = "Paired")[c(2,4)]) +
+  theme_bw(base_size = bs) +
+  theme(legend.position= 'inside',legend.position.inside = c(0.8, 0.8),
+                legend.background = element_rect(fill="lightgray"))
+
+percentage_aligned = data.frame(percentage_aligned = sequences$percentage_aligned*100)
+p1_percalign = ggplot(percentage_aligned, aes(x=percentage_aligned)) +
+  geom_histogram(alpha = 0.75,bins =25,position = 'identity',fill = 'goldenrod') + 
+  xlim(0.72,0.93) +
+  ylab('Count') +
+  xlab('Percentage of sequences aligned') + 
+ # ggtitle('Sequencing output') +
+  scale_fill_manual(values = brewer.pal(n =4, name = "Paired")[c(4,2)]) +
+  theme_bw(base_size = bs) +
+  theme(legend.position = 'none')
+
+
+#qualtissue
+plot_qual_type = ggplot(sequences, aes(x=mean_quality)) +
+    geom_histogram(alpha = 1,bins =150,position = 'identity', fill = 'black') + 
+   geom_hline(yintercept=0,linetype="dashed") + 
+#    ggtitle("Sequencing quality ~ tissue type") +
+    xlab("Sequencing quality (Phred Score)") + 
+    ylab('Count') +
+    xlim(0,40) +
+    theme_bw(base_size = bs) + 
+    theme(legend.position = 'none')
+  
+plot_expression = ggplot(log10_counts_pergene, aes(x=log10_counts_pergene)) +
+    geom_histogram(alpha = 0.75,bins =150,position = 'identity', fill = 'red') + 
+#    ggtitle("Sequencing quality ~ tissue type") +
+    xlab('Transcripts per million mapped reads (TPM)') +
+    ylab('Count') +
+    scale_x_continuous(limits = c(-5,4), labels  = c('0.0001','0.01','0.1','1','10','100','1000'), breaks=c(-4,-2,-1,0,1,2,3)) +
+    theme_bw(base_size = bs) + 
+    theme(legend.position = 'none')
+
+
+
+#output
+pdf(file.path('C:/Users/renseb01/Documents/clustering_gexpr/results/Mar2025','FigureS1_qc.pdf'),width = 10,height = 8)
+(p1|plot_qual_type) / (p1_percalign|plot_expression) +plot_annotation(tag_levels  = 'A') 
+dev.off()
+
+
+#pdf(file.path(params$datapath,'results/QC/qc_extra.pdf'),width = 10,height = 6.7)
+#png(file.path(params$datapath,'results/QC/qc_extra.png'),width = 1400, height = 1000)
+#(p1_extra|plot_totseq_type)/ ((plot_qual_type|plot_spacer())+plot_layout(width = c(5.7,4.3)))
+#dev.off()
+```
+ 
+# session info 
+```{r session, message= T}
+###session
+sessionInfo()
+```
+     
+     

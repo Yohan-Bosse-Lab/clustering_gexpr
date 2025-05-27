@@ -1,0 +1,304 @@
+---
+title: "Gexpr clustering"
+author: "Sébastien Renaut (sebastien.renaut@criucpq.ulaval.ca)"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    number_sections: F
+params:
+  datapath: 'C:/Users/renseb01/Documents/clustering_gexpr/data'
+  outputpath: 'C:/Users/renseb01/Documents/clustering_gexpr/results/April2025'
+  repo: 'C:/Users/renseb01/Documents/clustering'
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = params$repo)
+knitr::opts_chunk$set(echo = F)
+library(ggplot2)
+library(patchwork)
+library(factoextra)
+library(FactoMineR)
+library(cluster)
+library(DESeq2)
+library(dplyr)
+library(tidyr)
+library(RColorBrewer)
+library(biomaRt)
+library(org.Hs.eg.db)
+library(ComplexUpset)
+library(survival)
+library(survminer)
+library(readxl)
+```
+
+
+
+```{r data,eval = T}
+pfits = list()
+gtables = list()
+gbartables = list()
+plots_predictor_patho = list()
+plots_predictor_gexpr = list() 
+ #3. get bulkRNAseq data
+  txi = readRDS(file.path(params$repo,'../rnaseq/lord_kallisto/txi.rds'))
+
+  #bulk = as.matrix(txi$abundance)
+  bulk <- round(txi$counts)
+  rownames(bulk) = sapply(strsplit(rownames(bulk), ".",fixed = T), "[",1) #matrix. genes X cells. Floats (Counts). Raw abundance (so TPM)
+  colnames(bulk) = sapply(strsplit(colnames(bulk), ".",fixed = T), "[",5)
+
+  bulk_vst = vst(bulk)
+```
+  
+  
+```{r stages}
+for(stages in c('1AB','1A')) {
+  clinical_bigtable = read.csv(file.path(params$repo,'../rnaseq/data/clinical_bigtable_v3.csv'), check.names = F)
+
+if(stages == '1AB'){  
+clinical_bigtable = clinical_bigtable[clinical_bigtable$`Pathology_Tumor_Stage pathologic` == '1A'|clinical_bigtable$`Pathology_Tumor_Stage pathologic` == '1A'|clinical_bigtable$`Pathology_Tumor_Stage pathologic` == '1A1'|clinical_bigtable$`Pathology_Tumor_Stage pathologic` == '1A2'|clinical_bigtable$`Pathology_Tumor_Stage pathologic` == '1A3'|clinical_bigtable$`Pathology_Tumor_Stage pathologic` == '1B',]}
+
+  
+if(stages == '1A'){ 
+clinical_bigtable = clinical_bigtable[clinical_bigtable$`Pathology_Tumor_Stage pathologic` == '1A'|clinical_bigtable$`Pathology_Tumor_Stage pathologic` == '1A'|clinical_bigtable$`Pathology_Tumor_Stage pathologic` == '1A1'|clinical_bigtable$`Pathology_Tumor_Stage pathologic` == '1A2'|clinical_bigtable$`Pathology_Tumor_Stage pathologic` == '1A3',]}
+
+  
+  #do the clustering
+    variance_genes = apply(bulk_vst[,grep('Tumeur',colnames(bulk_vst))],1,var)
+    cutoff = quantile(variance_genes,seq(0,1,by = 0.05))[20]
+    bulk_vst_variable = bulk_vst[variance_genes > cutoff, ]
+    bulk_vst_variable_tumeur = t(bulk_vst_variable[,grep('Tumeur',colnames(bulk_vst_variable))])
+    
+    set.seed(123456)
+    cluster_table = data.frame(`Record ID` = sapply(strsplit(rownames(bulk_vst_variable_tumeur), "_",fixed = T), "[",3),
+                               k2 =  paste0('c',kmeans(bulk_vst_variable_tumeur,2,nstart = 100)$cluster),
+                               k3 =  paste0('c',kmeans(bulk_vst_variable_tumeur,3,nstart = 100)$cluster),
+                               k4 =  paste0('c',kmeans(bulk_vst_variable_tumeur,4,nstart = 100)$cluster),
+                               check.names = F)
+    
+    cluster_table$k2 = factor(cluster_table$k2,levels =c('c1','c2'))
+    if(stages == '1AB') cluster_table$k4 = factor(cluster_table$k4,levels =c('c2','c1','c4','c3'))
+    if(stages == '1A') cluster_table$k4 = factor(cluster_table$k4,levels =c('c2','c4','c1','c3'))
+    
+#survival analysis
+clinical_cluster = merge(cluster_table,clinical_bigtable,by = 'Record ID')
+clinical_cluster$status = ifelse(clinical_cluster$`Profil_visit_history_Vital status` == "Alive",0,1)
+clinical_cluster$pfs = clinical_cluster$`Follow-up_PFS (2022)`/365
+clinical_cluster$Stage = clinical_cluster$`Pathology_Tumor_Stage pathologic`
+
+#
+if(stages == '1AB') {
+ clinical_cluster$Stage[clinical_cluster$Stage %in% c('1A','1A1','1A2','1A3')] = '1A'
+ clinical_cluster$Stage = factor(clinical_cluster$Stage, levels = c('1A','1B'))  
+ palette = c(brewer.pal(9,'Set1'),brewer.pal(7,'Set3'))
+ #
+ fit = survfit(Surv(pfs, status) ~ Stage, data = clinical_cluster[clinical_cluster$pfs<5,])
+ pfits[[1]] = ggsurvplot(fit,pval = T,conf.int = F,legend.title = "Staging",xlab = c('Time (years)'),legend.labs = c("1A", "1B"),palette = palette[c(5,7)],risk.table = T)
+ 
+ fit = survfit(Surv(pfs, status) ~ k4, data = clinical_cluster[clinical_cluster$pfs<5,])
+pfits[[2]] = ggsurvplot(fit,pval = T,conf.int = F,legend.title = "k = 4",xlab = c('Time (years)'),legend.labs = c('c2','c1','c4','c3'),palette = palette[4:1],risk.table = T) #
+}
+
+#
+if(stages == '1A') {
+ #clinical_cluster$Stage[clinical_cluster$Stage %in% c('1A','1A1','1A2','1A3')] = '1A'
+ clinical_cluster$Stage = factor(clinical_cluster$Stage, levels = c('1A1','1A2','1A3'))
+ palette = c(brewer.pal(9,'Set1'),brewer.pal(5,'Set3'))
+ #
+ fit = survfit(Surv(pfs, status) ~ Stage, data = clinical_cluster[clinical_cluster$pfs<5,])
+ pfits[[3]] = ggsurvplot(fit,pval = T,conf.int = F,legend.title = "Staging",xlab = c('Time (years)'),legend.labs = c('1A1','1A2','1A3'),palette = palette[c(8,6,9,10)],risk.table = T)
+ 
+ fit = survfit(Surv(pfs, status) ~ k4, data = clinical_cluster[clinical_cluster$pfs<5,])
+pfits[[4]] = ggsurvplot(fit,pval = T,conf.int = F,legend.title = "k = 4",xlab = c('Time (years)'),legend.labs = c('c2','c4','c1','c3'),palette = palette[c(12:14,1)],risk.table = T)
+}
+
+
+
+#r hazard ratios
+
+hazard_summarised = NULL
+factors = c('Stage','k2','k4')
+
+#loop
+for(i in 1:length(factors)){
+ 
+  dataset = clinical_cluster[clinical_cluster$pfs<ifelse(stages == '1AB',5,5),colnames(clinical_cluster) %in% c('pfs','status', factors[i])]
+  colnames(dataset)[colnames(dataset) == factors[i]] = 'zzz' 
+  
+  coxfit = coxph(Surv(pfs,status) ~ zzz, data = dataset, x = TRUE)
+  coxfit_summary = summary(coxfit)
+  rownames(coxfit_summary$conf.int) = gsub('zzz',factors[i],rownames(coxfit_summary$conf.int))
+  
+  #better info
+  coxfit_summary2 = cbind(rbind(c(1,1,1),coxfit_summary$conf.int[,c(1,3,4)]),c(1,coxfit_summary$coefficients[,5]))
+  rownames(coxfit_summary2)[1:2] = c(paste0(factors[i],levels(clinical_cluster[,colnames(clinical_cluster) %in% factors[i]])[1]),
+                                     rownames(coxfit_summary$conf.int)[1])
+  
+  coxfit_summary2 = as.data.frame(coxfit_summary2)
+  coxfit_summary2$n = table(dataset$zzz)
+  coxfit_summary2$names = factors[i]
+  coxfit_summary2$catego = rownames(coxfit_summary2)
+  coxfit_summary2$catego = gsub(factors[i],'',coxfit_summary2$catego)
+  coxfit_summary2 = coxfit_summary2[nrow(coxfit_summary2):1,]
+  
+  if(i == 1 ) hazard_summarised = coxfit_summary2
+  if(i > 1)   hazard_summarised = rbind(hazard_summarised,coxfit_summary2)
+  
+  #rownames(coxfit_summary$conf.int) = gsub('zzz',factors[i],rownames(coxfit_summary$conf.int))
+  }
+
+
+colnames(hazard_summarised)[1:4] = c('HR','low','high','pval')
+hazard_summarised$rownames = factor(rownames(hazard_summarised),levels = rownames(hazard_summarised))
+hazard_summarised = hazard_summarised[hazard_summarised$catego!= 'unknown',]
+
+hazard_summarised$pvalue = as.character(signif(hazard_summarised$pval,2))
+hazard_summarised$pvalue[hazard_summarised$pval > 0.99999] = 'Reference'
+hazard_summarised$ntext = paste0('n = ', hazard_summarised$n)
+
+hazard_summarised = hazard_summarised[c(nrow(hazard_summarised):1),]
+#
+gexpr_factors = c('top25% variable')
+
+hazard_summarised_patho = hazard_summarised[hazard_summarised$names == 'Stage', ]
+hazard_summarised_patho$high[hazard_summarised_patho$high>3] = 2.99
+hazard_summarised_patho$catego = factor(hazard_summarised_patho$catego,levels = hazard_summarised_patho$catego)
+
+hazard_summarised_gexpr = hazard_summarised[hazard_summarised$names == ifelse(stages == '1AB','k4','k4'),]
+hazard_summarised_gexpr$high[hazard_summarised_gexpr$high>10] = 9.99
+hazard_summarised_gexpr$catego = factor(hazard_summarised_gexpr$catego,levels = hazard_summarised_gexpr$catego)
+
+#if(stages == '1A') {
+  hazard_summarised_gexpr$catego = factor(hazard_summarised_gexpr$catego,levels = rev(levels(hazard_summarised_gexpr$catego)))
+  
+  hazard_summarised_patho$catego = factor(hazard_summarised_patho$catego,levels = rev(levels(hazard_summarised_patho$catego)))
+
+  
+limits = ifelse(stages== '1AB',6,10)
+size = ifelse(stages == '1AB',3,2)
+  
+#plot
+plots_predictor_patho[[stages]] = 
+  ggplot(hazard_summarised_patho,aes(x = HR,y = catego, col = names)) + 
+  geom_errorbarh(aes(xmin= low, xmax= high),position = position_dodge(.6),show.legend = F) +
+  geom_vline(xintercept=1,linetype="dashed") + 
+  geom_point(shape = 15, size = 3) +
+  geom_label(aes(x=2.9,label = pvalue),size = size,show.legend = F,hjust = "inward") +
+  geom_label(aes(x=-0.4,label = ntext),size = size, show.legend = F,hjust = "inward") +
+  xlim(-0.5,3) + 
+  ylab('Predictor') +
+  xlab('Hazard Ratio') +
+  scale_fill_discrete(type = c('gray','white')) +
+  scale_color_discrete('',type = 'black')  +
+  scale_x_continuous(breaks=c(0,1,2,3)) + 
+  theme_gray() + 
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),legend.position = 'none',axis.text.y = element_text(size=6),axis.title = element_text(size=9)) 
+ # ggtitle('Prognostic value of pathological variables')
+
+
+#plot
+plots_predictor_gexpr[[stages]] =
+  ggplot(hazard_summarised_gexpr,aes(x = HR,y = catego, col = names)) + 
+  geom_errorbarh(aes(xmin= low, xmax= high),position = position_dodge(.6),show.legend = F) +
+  geom_vline(xintercept=1,linetype="dashed") + 
+  geom_point(shape = 15, size = 3) +
+  geom_label(aes(x=9.9,label = pvalue),size = 2,show.legend = F,hjust = "inward") +
+  geom_label(aes(x=-1.3,label = ntext),size = 2, show.legend = F,hjust = "inward") +
+  xlim(-1.4,10) + 
+  ylab('Predictor') +
+  xlab('Hazard Ratio') +
+  scale_fill_discrete(type = c('gray','white')) +
+  scale_color_discrete('Clustering factor',type  = 'black') +
+  scale_x_continuous(breaks=c(0,1,2,4,6,8,10)) +
+  theme_gray() + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),legend.position = 'none',axis.text.y = element_text(size=6),axis.title = element_text(size=9)) 
+
+
+#gtable
+table_clinical_cluster = clinical_cluster[clinical_cluster$pfs < ifelse(stages == '1AB',10,5),]
+
+table = as.data.frame(table(table_clinical_cluster$k4,table_clinical_cluster$Stage))
+table$Var1 = factor(table$Var1,level =levels(table$Var1)[4:1])
+table$relative[table$Var1=='c1'] = table$relative[table$Var1=='c1']  / sum(table$relative[table$Var1=='c1'] )
+table$relative[table$Var1=='c2'] = table$relative[table$Var1=='c2']  / sum(table$relative[table$Var1=='c2'] )
+table$relative[table$Var1=='c3'] = table$relative[table$Var1=='c3']  / sum(table$relative[table$Var1=='c3'] )
+table$relative[table$Var1=='c4'] = table$relative[table$Var1=='c4']  / sum(table$relative[table$Var1=='c4'] )
+
+
+####
+####bartables
+####
+if(stages=="1AB") {color = palette[1:4];color2 = palette[c(5,7)]}
+if(stages=="1A")  {color = palette[c(12:14)];color2 = palette[c(8,6,9)]}
+
+gtables[[stages]] = ggplot(table) + 
+  geom_text(aes(x = Var2,y = Var1, label = Freq)) +
+  ylab('Clusters') +
+  xlab('Substages (n)') +
+  theme_classic() + 
+  theme(axis.text.y = element_text(color=color))
+
+
+gbartables[[stages]] = ggplot(table,aes(x=Freq,y = Var1,fill = Var2, label = Freq))+ 
+  geom_bar(position="stack", stat="identity") + 
+ # geom_text(size = 3, position = position_stack(vjust = 0.5)) +
+  ylab('Clusters') +
+  xlab('Substages (n)') +
+  scale_fill_manual(values = color2) +
+  theme_classic() + 
+  theme(axis.text.y = element_text(color=color),legend.position = 'none',axis.title =element_text(size=9)) 
+
+
+print(paste0('Done loop ',stages, ', The time is: ',Sys.time()))
+}
+
+#fix the KM plots 
+for(i in 1:4){
+ # pfits[[i]]$plot = pfits[[i]]$plot + labs(x = NULL) + theme(axis.text.x=element_blank(), axis.text.y= element_text(size=6),axis.title.y =element_text(size=9)) + ggtitle(NULL) ##,
+  pfits[[i]]$plot = pfits[[i]]$plot + labs(x = 'Years') + theme(axis.text= element_text(size=6),axis.title =element_text(size=9)) + ggtitle(NULL) ##+axis.text.x=element_blank(),
+  pfits[[i]]$table =  pfits[[i]]$table  + labs(y = NULL) + ggtitle(NULL) + theme(axis.title.x =element_text(size=9))
+  pfits[[i]]$table$theme$axis.text.y$size = 8
+}
+```
+
+
+# save it
+```{r session, message= T}
+
+#save it 
+pdf(file.path(params$outputpath,paste0('Figure6_stage1.pdf')),width = 8,height = 5.5)
+(((pfits[[1]]$plot / pfits[[1]]$table / plots_predictor_patho[['1AB']]) + plot_layout(height = c(9,4,4))) | 
+  ((pfits[[2]]$plot / pfits[[2]]$table / (plots_predictor_gexpr[['1AB']] |gbartables[['1AB']]) ) + plot_layout(height = c(9,4,4)))) + plot_annotation(tag_levels = list(c('A','B','C','D','E','F','G')))
+dev.off()
+
+pdf(file.path(params$outputpath,paste0('FigureS3_stage1.pdf')),width = 8,height = 5.5)
+  (((pfits[[3]]$plot / pfits[[3]]$table / plots_predictor_patho[['1A']]) + plot_layout(height = c(9,4,4))) | 
+  ((pfits[[4]]$plot / pfits[[4]]$table / (plots_predictor_gexpr[['1A']]|gbartables[['1A']])) + plot_layout(height = c(9,4,4))))  + plot_annotation(tag_levels = list(c('A','B','C','D','E','F','G')))
+dev.off()
+
+
+
+#save it 
+#pdf(file.path(params$outputpath,paste0('Figure6_stage1_Lordmeeting.pdf')),width = 8,height = 5.5)
+(((pfits[[1]]$plot  / plots_predictor_patho[['1AB']]) + plot_layout(height = c(9,4,4))) | 
+  ((pfits[[2]]$plot  / (plots_predictor_gexpr[['1AB']] ) ) + plot_layout(height = c(9,4,4)))) + plot_annotation(tag_levels = list(c('A','B','C','D','E','F','G')))
+#dev.off()
+
+#pdf(file.path(params$outputpath,paste0('FigureS3_stage1_Lordmeeting.pdf')),width = 8,height = 5.5)
+  (((pfits[[3]]$plot  / plots_predictor_patho[['1A']]) + plot_layout(height = c(9,4,4))) | 
+  ((pfits[[4]]$plot  / (plots_predictor_gexpr[['1A']])) + plot_layout(height = c(9,4,4))))  + plot_annotation(tag_levels = list(c('A','B','C','D','E','F','G')))
+#dev.off()
+
+
+```
+# session info 
+```{r session, message= T}
+sessionInfo()
+
+coxfit1 = coxph(Surv(pfs,status) ~ Stage * k4 , data = clinical_cluster[clinical_cluster$pfs<(365*ifelse(stages == '1AB',10,5)),] , x = TRUE)
+gtsummary::tbl_regression(coxfit1, exponentiate = TRUE)
+```
+
+
