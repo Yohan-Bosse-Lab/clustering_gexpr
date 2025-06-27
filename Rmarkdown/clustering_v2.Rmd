@@ -149,9 +149,7 @@ k5 = kmeans(bulk_vst_variable_tumeur,5,nstart = 100)
 sil <- silhouette(k3$cluster, dist(bulk_vst_variable_tumeur))
 sil_k = fviz_silhouette(sil)
 
-
-
-# Hierarchical clustering
+#Hierarchical clustering
 #hc.cut2 = hcut(bulk_vst_variable_tumeur, k = 2, hc_method = "complete")
 #hc.cut3 = hcut(bulk_vst_variable_tumeur, k = 3, hc_method = "complete")
 #hc.cut4 = hcut(bulk_vst_variable_tumeur, k = 4, hc_method = "complete")
@@ -194,7 +192,7 @@ clinical_bigtable$Age[clinical_bigtable$`Profil_visit_history_Age at diagnosis`<
 clinical_bigtable$Age[clinical_bigtable$`Profil_visit_history_Age at diagnosis`>= 60 & clinical_bigtable$`Profil_visit_history_Age at diagnosis` < 75] = '60-75'
 
 #
-clin_sub = clinical_bigtable[,colnames(clinical_bigtable) %in% c('Record ID','Profil_visit_history_Smoking status','Pathology_Tumor_Stage pathologic','Profil_visit_history_Sex at birth','Pathology_Tumor_Grade','Pathology_Tumor_Predominant feature','Percentage of Tumor')]
+clin_sub = clinical_bigtable[,colnames(clinical_bigtable) %in% c('Record ID','Profil_visit_history_Smoking status','Pathology_Tumor_Stage pathologic','Profil_visit_history_Sex at birth','Pathology_Tumor_Grade','Pathology_Tumor_Predominant feature','Percentage of Tumor','batch')]
 
 #
 cluster_clinical_table = merge(cluster_table,clin_sub,by =  'Record ID')
@@ -238,6 +236,7 @@ cluster_clinical_table$heigth = 1
 
 
 #factorise
+cluster_clinical_table$batch = as.factor(cluster_clinical_table$batch)
 cluster_clinical_table$Pathology_Tumor_Grade = as.factor(cluster_clinical_table$Pathology_Tumor_Grade)
 cluster_clinical_table$`Pathology_Tumor_Predominant feature` = as.factor(cluster_clinical_table$`Pathology_Tumor_Predominant feature`)
 cluster_clinical_table$`Pathology_Tumor_Stage pathologic` = as.factor(cluster_clinical_table$`Pathology_Tumor_Stage pathologic`)
@@ -291,7 +290,8 @@ ggplot(pca_dataplot) + geom_point(aes(x = dim1,y = dim2,col = `Pathology_Tumor_P
 
 fviz_pca_biplot(pca_data,
                 select.var= list(contrib = 2),
-                col.ind = clinical_bigtable$`Percentage of Tumor`, # color by groups
+                #col.ind = clinical_bigtable$`Percentage of Tumor`, # color by groups
+                col.ind = clinical_bigtable$Profil_visit_history_Chemotherapy,
                 col.var='black',
                 geom = 'point',
                 addEllipses = F, # Concentration ellipses
@@ -334,17 +334,24 @@ pk2 + pk3 + pk4
 
 
 ```{r ari score}
+#batch effect 
+sil <- silhouette(as.numeric(cluster_clinical_table$batch), dist(bulk_vst_variable_tumeur))
+print(t.test(sil[,3],alternative = 'greater'))
+#
+
+
+
 library(ggcorrplot)
 ari = matrix(0,nrow =10,ncol =10)
 
 
-colnames(ari) = gsub('Profil_visit_history_','',colnames(cluster_clinical_table)[3:12])
+colnames(ari) = gsub('Profil_visit_history_','',colnames(cluster_clinical_table)[c(3:11,12)])
 colnames(ari) = gsub('Pathology_Tumor_Stage pathologic','Stage',colnames(ari))
 colnames(ari) = gsub('Pathology_Tumor_Predominant feature','Predom.\nfeature',colnames(ari))
 colnames(ari) = gsub('Pathology_Tumor_Grade','Grade',colnames(ari))
 colnames(ari) = gsub('Smoking status','Smoking',colnames(ari))
 colnames(ari) = gsub(' at birth','',colnames(ari))
-colnames(ari) = gsub('Percentage of Tumor','Tumor (%)',colnames(ari))
+#colnames(ari) = gsub('Percentage of Tumor','Tumor (%)',colnames(ari))
 rownames(ari) = colnames(ari)
 
 #
