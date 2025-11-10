@@ -7,7 +7,7 @@ output:
     number_sections: F
 params:
   datapath: 'C:/Users/renseb01/Documents/clustering_gexpr/data'
-  outputpath: 'C:/Users/renseb01/Documents/clustering_gexpr/results/Nov2024'
+  outputpath: 'C:/Users/renseb01/Documents/clustering_gexpr/results/Oct2025'
   repo: 'C:/Users/renseb01/Documents/clustering'
    
 ---
@@ -58,7 +58,7 @@ for(i in 1:length(gdc_files)){
 
   clinical = rbind(clinical,temp_clinical[1,])
 
-  if(i %% 100 == 0) print(paste0('Done ',i,', Time is:',Sys.time()))
+  if(i %% 50 == 0) print(paste0('Done ',i,', Time is:',Sys.time()))
 }
 
 #remove the summary stats
@@ -89,6 +89,7 @@ write.table(clinical_table,file.path(params$datapath,'gdc/clinical_table.csv'), 
 
 ```{r ConsensusClusterPlus}
 bulkmat_vst_tcga = read.table(file.path(params$datapath,'gdc/bulkmat_tcga.csv'), header = T, check.names = F)
+clinical_table = read.table(file.path(params$datapath,'gdc/clinical_table.csv'), header = T, check.names = F)
 
 bulk_vst = bulkmat_vst_tcga
 variance_genes = apply(bulk_vst, 1,var)

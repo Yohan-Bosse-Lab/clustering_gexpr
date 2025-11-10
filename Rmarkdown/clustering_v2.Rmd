@@ -80,11 +80,12 @@ bulk_vst_variable_tumeur = bulk_vst_variable_tumeur[order(rownames(bulk_vst_vari
 sildata = NULL
 wssdata = NULL
 winner = NULL
+genes = data.frame(w = rep(0,1000))
 #x$data
 #sildata$rep = as.character(0)
 #wssdata$rep = as.character(0) 
 
-for(i in 1:1000){
+for(i in 1:300){
  #ran = sample(1:15000,5)
   set.seed(i)
   ran = sample(1:ncol(bulk_vst_variable_tumeur),100)
@@ -100,6 +101,22 @@ for(i in 1:1000){
   sildata = rbind(sildata,temp$data)
   wssdata = rbind(wssdata,tempW$data)
   winner = c(winner,temp$data$clusters[temp$data$y == max(temp$data$y)])
+  
+  
+  #fraction of genes significant out of 100
+  k2 = kmeans(bulk_subsampled,2,nstart = 100)
+  genes_temp = rep(0,100)
+  for(g in 1:100)
+  {
+     data = data.frame(as.factor(k2$cluster),bulk_subsampled[,g])
+     colnames(data) = c('gr','gene')
+    lm_out = summary(lm(gene~gr,data))
+    genes_temp[g] = lm_out$coefficients[2,4]
+    #if(lm_out$coefficients[2,4] < 0.05) genes = genes + 1
+  }
+  genes[i,1] = length(genes_temp[genes_temp<(0.05/100)])
+  
+  
   
   if(i %% 100 == 0) print(paste0('Time is: ', Sys.time(), ', i = ', i))
 }
